@@ -1,0 +1,12 @@
+Components: controller
+
+1. BMP180 Barometer
+2. C1 100mkF
+3. C2 0.1 mkF
+4. D1 Nano v3
+5. G1 DC Jack
+6. LDR1  
+7. R0 10k
+8. SB1 TTP223
+9. SB2 RST
+10. X1

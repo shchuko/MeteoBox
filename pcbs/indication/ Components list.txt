@@ -1,0 +1,36 @@
+Components: indication
+
+1. LED1 Blue
+2. LED2 Blue
+3. LED3 Blue
+4. LED4 Blue
+5. LED5 Blue
+6. LED6 Blue
+7. LED7 Blue
+8. LED8 Blue
+9. LED9 Blue
+10. LED10 Green
+11. LED11 Green
+12. LED12 Green
+13. LED13 Green
+14. LED14 Green
+15. LED15 Green
+16. LED16 Green
+17. LED17 Red
+18. R1 6.8k
+19. R2 6.8k
+20. R3 6.8k
+21. R4 6.8k
+22. R5 6.8k
+23. R6 6.8k
+24. R7 6.8k
+25. R8 6.8k
+26. R9 6.8k
+27. R10 20k
+28. R11 20k
+29. R12 20k
+30. R13 20k
+31. R14 20k
+32. R15 20k
+33. R16 20k
+34. R17 3.3k
