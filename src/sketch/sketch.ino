@@ -63,17 +63,11 @@
 // button preferences 
 #define BT1_INTERRUPT   1       // Controll button interrupt number
 #define BT1_TOUCH_MODE  CHANGE  // Controll button interrupt mode
-
-// -----Global variables-----
-uint16_t  pressure = 0; // current pressure in hPa
-int16_t   temperature = 0;  // current temperature in *C
-
-uint16_t  illumination = 511; // current illumination value (from ADC: 0..1023)
-
+   
 // -----Classes------
 class LedString { // LED string class 
                   // Contains methods for controlling the 
-                  // LED string as a shift register (max is 255)
+                  // LED string connected to the digital pins (max is 255)
 private:
 
   uint8_t*  LED_string  = NULL;
@@ -141,28 +135,107 @@ public:
   
 };
 
+class MedianFilter {  //Median filter class
+private:
+  int32_t *values = NULL; // pointer at the first saved value
+  uint8_t val_count = 0; // count of values
+  
+  uint8_t new_val_pos = 0;  // position of new value in values[ ] ( used in function new_val )
+  
+  int32_t result = 0; // result value 
+
+  void calculate( ) { // calculating median value
+    // bubble sort algorithm
+    for( uint8_t i = 0; i < val_count - 1; i++ )  
+      for( uint8_t j = i + 1; j < val_count; j++ )
+      { 
+        if( values[ i ] > values[ j ] )
+        {
+          int32_t term_val = values[ i ];
+          values[ i ] = values[ j ];
+          values[ j ] = term_val;
+        }
+      }
+    result = values[ ( uint8_t )(( val_count - 1 ) / 2 ) ]; // saving median value
+  }
+  
+public:
+  MedianFilter( uint8_t _val_count ) {
+    val_count = _val_count; // saving the count of values
+    values = new uint32_t[ _val_count ]; // allocate memory for saving values    
+  }
+
+  void init( int32_t val ) {
+    for ( uint8_t i = 0; i < val_count; i++ )
+      values[i] = val;
+    result = val;
+  }
+  bool new_val( int32_t val ) { // updating (saving) new value
+                                        // returning 1 - updating complete, 0 - updating not complete 
+      values[ new_val_pos ] = val; // saving new value
+      new_val_pos++; // incriminate value pos counter
+    if ( new_val_pos == val_count )  // if all values saved
+    {
+      new_val_pos = 0; 
+      calculate( ); // calculating median value
+      return 1; // returning 1
+    } 
+    // else 
+    return 0; // returning 0
+  } 
+
+  int32_t get_result( ) {  // returning calculated median value
+    return result;
+  }
+
+};
+
 // -----Objects------
 LedString prs_led(9); // pressure indication string
 LedString temp_led(7);  // temperature indication string
+
 Adafruit_BMP085 bmp;  // BMPxxx sensor
 
+MedianFilter avr_pressure( 10 );  // median filter for BMP180 barometer data
+MedianFilter avr_luminosity( 10 );  // median filter for light-dependent resistor data
+
+// -----Global variables-----
+uint16_t  pressure = 0;       // current pressure in hPa
+int16_t   temperature = 0;    // current temperature in *C
+
+uint16_t  luminosity = 1023;  // current illumination value (from ADC: 0..1023)
+
+bool      night_mode = 0;     // night mode flag (0 - LED strings ON, 1 - LED strings OFF)
+
+bool      prs_disp_mode = 0;  // pressure LED string display mode
+                              // 0 - current pressure (hPa), 1 - pressure change speed (Pa/h) 
+ 
 // -----Functions-----
-void button_touch( ) { 
+void button_touch( ) {
   
 }
 
-uint16_t avr_pressure( ) {
-  uint32_t prs_measurements_sum = 0;
+uint16_t pressure_upd( ) {  // pressure update function
+  while ( !avr_pressure.new_val( bmp.readPressure( ) ) ) { }      //updating pressure
+  return ( uint16_t )( avr_pressure.get_result( )  * Pa_to_hPa ); //using median filter
+}
 
-  for ( uint8_t i = 0; i < 15; i++ )
-    prs_measurements_sum = bmp.readPressure( );
-    
-  return prs_measurements_sum / 15;
+void luminosity_upd( uint16_t& _luminosity ) {  // luminosity update function
+  static uint64_t time_counter = millis( );  // saving current millis( ) value
+  
+  if ( millis( ) < time_counter ) // if interal arduino millis counter was resetted
+    time_counter = millis( ); //  resetting luminosity update time counter
+      
+  if ( millis( ) - time_counter > 300 ) // if 300ms was left
+  { 
+    time_counter = millis( ); // updating luminosity update time counter
+    if ( avr_luminosity.new_val( analogRead( LDR ) ) ) //updating luminosity
+      _luminosity = avr_luminosity.get_result( );      //using median filter
+  }
 }
 
 void setup( ) {
   bmp.begin( );
-  
   // initialisation temperature indication pins
   temp_led.init_pin( L_16C, 0 );
   temp_led.init_pin( L_18C, 1 );
@@ -185,12 +258,14 @@ void setup( ) {
 
   // set pin mode for power LED pin
   pinMode( L_PWR, OUTPUT );
-
-  delay( 100 ); // 100 ms delay
-
-  pressure = round( avr_pressure( ) * Pa_to_hPa );  // saving current pressure 
+  
+  avr_pressure.init( bmp.readPressure( ) );
+  avr_luminosity.init( analogRead( A7 ) );
+  
+  pressure = ( uint16_t )( avr_pressure.get_result( )  * Pa_to_hPa );  // saving current pressure 
   temperature = bmp.readTemperature( ); // saving current temperature
-
+  luminosity = avr_luminosity.get_result( ); //saving current luminosity
+  
   //  indication testing:
   for ( uint8_t i = 0; i < 9; i++ ) { // pressure indication string - turning on
      prs_led.set_pin( i, 1 );
@@ -218,13 +293,15 @@ void setup( ) {
   
   //  attach interrupt for control button
   attachInterrupt( BT1_INTERRUPT, button_touch, BT1_TOUCH_MODE );
-  
 }
 
 void loop( ) { 
-  // simple blink
-  delay( 200 ); 
-  digitalWrite( L_PWR, !digitalRead( L_PWR ) );
-    
+  luminosity_upd( luminosity ); //updating luminosity
+  
+  if ( luminosity < 95 )
+    digitalWrite( L_PWR, 0 );
+  else if ( luminosity > 127 )
+    digitalWrite( L_PWR, 1 );
+  else {} 
 
 }
