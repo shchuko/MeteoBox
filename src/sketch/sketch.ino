@@ -4,7 +4,7 @@
  *  Created: 2018
  *  Website: https://github.com/shchuko 
  *  
- *  27/03/2018 Shchuko: Added new class to handy interact with the LEDs. Bug fixes
+ *  7/04/2018 ShchukoSchool: Added new classes PressureForecast and MedianFilter
  */
 
 /* PIN CONFIGURATION
@@ -56,10 +56,15 @@
 #define L_150PM 10
 #define L_200PM 11
 
+// -----Pressure forecast-----
+#define FORECAST_VAL_NUMBER     6    // number of saved values
+#define FORECAST_UPDATE_INTERVAL  10 // ... in minutes
+#define PRESSURE_UPDATE_INTERVAL  1  // ... in minutes 
 // -----Other-----
 #define LDR     A7  // Light-dependent resistor
 #define L_PWR   1   // Power LED
 #define Pa_to_hPa 0.01 
+
 // button preferences 
 #define BT1_INTERRUPT   1       // Controll button interrupt number
 #define BT1_TOUCH_MODE  CHANGE  // Controll button interrupt mode
@@ -72,7 +77,7 @@ private:
 
   uint8_t*  LED_string  = NULL;
   uint8_t*  pins = NULL;
-  uint8_t   count = 0;
+  uint8_t   number = 0;
 
   uint8_t byte_num( uint8_t pin_num ) { // byte number in allocated memory
     pin_num++;
@@ -85,14 +90,14 @@ private:
   
 public: 
 
-  LedString( uint8_t _count ) {
-    count = _count; // saving the count of LEDs
-    pins = new uint8_t[ count ];  // allocate memory for pins numbers
+  LedString( uint8_t _number ) {
+    number = _number; // saving the number of LEDs
+    pins = new uint8_t[ number ];  // allocate memory for pins numbers
 
-    uint8_t byte_count = _count / 8 + ( _count / 8.0 > _count / 8 );  // calculating a sufficient amount of memory (in bytes)
-    LED_string = new uint8_t[ byte_count ]; // allocate memory for pins states
+    uint8_t byte_number = _number / 8 + ( _number / 8.0 > _number / 8 );  // calculating a sufficient number of memory (in bytes)
+    LED_string = new uint8_t[ byte_number ]; // allocate memory for pins states
     
-    for ( uint8_t i = 0; i < byte_count; i++ ) // clearing the memory
+    for ( uint8_t i = 0; i < byte_number; i++ ) // clearing the memory
       LED_string[ i ] = 0;  
   } 
   
@@ -138,7 +143,7 @@ public:
 class MedianFilter {  //Median filter class
 private:
   int32_t *values = NULL; // pointer at the first saved value
-  uint8_t val_count = 0; // count of values
+  uint8_t val_number = 0; // number of values
   
   uint8_t new_val_pos = 0;  // position of new value in values[ ] ( used in function new_val )
   
@@ -146,8 +151,8 @@ private:
 
   void calculate( ) { // calculating median value
     // bubble sort algorithm
-    for( uint8_t i = 0; i < val_count - 1; i++ )  
-      for( uint8_t j = i + 1; j < val_count; j++ )
+    for( uint8_t i = 0; i < val_number - 1; i++ )  
+      for( uint8_t j = i + 1; j < val_number; j++ )
       { 
         if( values[ i ] > values[ j ] )
         {
@@ -156,17 +161,17 @@ private:
           values[ j ] = term_val;
         }
       }
-    result = values[ ( uint8_t )(( val_count - 1 ) / 2 ) ]; // saving median value
+    result = values[ ( uint8_t )(( val_number - 1 ) / 2 ) ]; // saving median value
   }
   
 public:
-  MedianFilter( uint8_t _val_count ) {
-    val_count = _val_count; // saving the count of values
-    values = new uint32_t[ _val_count ]; // allocate memory for saving values    
+  MedianFilter( uint8_t _val_number ) {
+    val_number = _val_number; // saving the number of values
+    values = new uint32_t[ _val_number ]; // allocate memory for saving values    
   }
 
   void init( int32_t val ) {
-    for ( uint8_t i = 0; i < val_count; i++ )
+    for ( uint8_t i = 0; i < val_number; i++ )
       values[i] = val;
     result = val;
   }
@@ -174,7 +179,7 @@ public:
                                         // returning 1 - updating complete, 0 - updating not complete 
       values[ new_val_pos ] = val; // saving new value
       new_val_pos++; // incriminate value pos counter
-    if ( new_val_pos == val_count )  // if all values saved
+    if ( new_val_pos == val_number )  // if all values saved
     {
       new_val_pos = 0; 
       calculate( ); // calculating median value
@@ -190,11 +195,114 @@ public:
 
 };
 
+class PressureForecast {
+private:
+  uint32_t   *pressure = NULL;        // pointer for dynamic memory allocation
+  int16_t    change_hour;             // pressure change forecast (Pa/h)
+  uint8_t    measurement_number;       // measurement number used for calculating forecast
+  uint16_t   measurement_interval;    // pressure update interval (in minutes)
+  uint8_t    meas_updts_counter = 1;  // pressure updates counter
+  
+  void calculate( ) {   // pressure change calculatioin
+                        // using least squares fit
+    uint32_t sumx = 0;  
+    uint32_t sumy = 0;
+    uint32_t sumx2 = 0;
+    uint32_t sumxy = 0;
+    for ( uint8_t i = 0; i < measurement_number; i++ ) {
+      sumx += i;
+      sumy += pressure[ i ];
+      sumx2 += i * i;
+      sumxy += i * pressure[ i ];
+    }
+    double a;
+    a = measurement_number * sumxy;
+    a -= sumx * sumy;
+    a = ( double )a / ( measurement_number * sumx2 - sumx * sumx );
+    change_hour = round( a * 60 / measurement_interval ); // pressure change forecast (Pa/h)
+  }
+  
+public:
+  void set( uint32_t _pressure ) {  // set new pressure value
+    for ( uint8_t i = 0; i < measurement_number - 1; i++ ) // shifting old saved values
+      pressure[ i ] = pressure[ i + 1 ];  
+    pressure[ measurement_number - 1 ] = _pressure;  // saving new value
+
+    calculate( ); // re-calculating  forecast
+    
+    if ( meas_updts_counter < measurement_number );  // if full update did not complete
+      meas_updts_counter++; 
+  }
+
+  bool is_update( ) {  // returning 1 if full update completed
+    return ( meas_updts_counter >= measurement_number );
+  }
+  
+  uint32_t get_pressure( ) { // returning last saved measurement
+    return pressure[ measurement_number - 1 ];
+  }
+
+  int32_t get_forecast( ) { // returning pressure change forecast (Pa/h)
+    return change_hour;
+  }
+  
+  uint8_t get_forecast_range( ) { // returning range of pressure change forecast
+    if ( change_hour <= -200 )
+      return 0;
+    if ( change_hour <= -175 )
+      return 1;
+    if ( change_hour <= -150 )
+      return 2;
+    if ( change_hour <= -125 )
+      return 3;
+    if ( change_hour <= -100 )
+      return 4;
+    if ( change_hour <= -75 )
+      return 5;
+    if ( change_hour <= -50 )
+      return 6;
+    if ( change_hour <= -25 )
+      return 7;
+    if ( change_hour < 25 && change_hour > -25 )
+      return 8;
+    if ( change_hour >= 200 )
+      return 16;
+    if ( change_hour >= 175 )
+      return 15;
+    if ( change_hour >= 150 )
+      return 14;
+    if ( change_hour >= 125 )
+      return 13;
+    if ( change_hour >= 100 )
+      return 12;
+    if ( change_hour >= 75 )
+      return 11;
+    if ( change_hour >= 50 )
+      return 10;
+    if ( change_hour >= 25 )
+      return 9;
+  }
+  
+  void begin( uint32_t _pressure )  // set first pressure value (in Pa)
+  {
+    for ( uint8_t i = 0; i < measurement_number; i++ )
+      pressure[ i ] = _pressure;
+  }
+  
+  PressureForecast( uint8_t  _measurement_number,         // measurement number used for calculating forecast
+                     uint16_t  _measurement_interval ) {  // pressure update interval (in minutes)
+    pressure = new uint32_t [ _measurement_number ];
+    measurement_number = _measurement_number;
+    measurement_interval = _measurement_interval;
+  }  
+};
+
 // -----Objects------
-LedString prs_led(9); // pressure indication string
-LedString temp_led(7);  // temperature indication string
+LedString prs_led( 9 ); // pressure indication string
+LedString temp_led( 7 );  // temperature indication string
 
 Adafruit_BMP085 bmp;  // BMPxxx sensor
+PressureForecast forecast( FORECAST_VAL_NUMBER, FORECAST_UPDATE_INTERVAL );  //  pressure change forecast
 
 MedianFilter avr_pressure( 10 );  // median filter for BMP180 barometer data
 MedianFilter avr_luminosity( 10 );  // median filter for light-dependent resistor data
@@ -216,8 +324,8 @@ void button_touch( ) {
 }
 
 uint16_t pressure_upd( ) {  // pressure update function
-  while ( !avr_pressure.new_val( bmp.readPressure( ) ) ) { }      //updating pressure
-  return ( uint16_t )( avr_pressure.get_result( )  * Pa_to_hPa ); //using median filter
+  while ( !avr_pressure.new_val(bmp.readPressure( )) ) { }      //updating pressure
+  return avr_pressure.get_result( ); //using median filter
 }
 
 void luminosity_upd( uint16_t& _luminosity ) {  // luminosity update function
@@ -262,10 +370,11 @@ void setup( ) {
   avr_pressure.init( bmp.readPressure( ) );
   avr_luminosity.init( analogRead( A7 ) );
   
-  pressure = ( uint16_t )( avr_pressure.get_result( )  * Pa_to_hPa );  // saving current pressure 
+  pressure = ( uint16_t )( avr_pressure.get_result( ) );  // saving current pressure 
   temperature = bmp.readTemperature( ); // saving current temperature
   luminosity = avr_luminosity.get_result( ); //saving current luminosity
-  
+
+  forecast.begin( pressure );
   //  indication testing:
   for ( uint8_t i = 0; i < 9; i++ ) { // pressure indication string - turning on
      prs_led.set_pin( i, 1 );
