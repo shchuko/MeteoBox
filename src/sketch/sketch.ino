@@ -65,10 +65,9 @@
 #define L_PWR   1   // Power LED
 #define Pa_to_hPa 0.01 
 
-// button preferences 
-#define BT1_INTERRUPT   1       // Controll button interrupt number
-#define BT1_TOUCH_MODE  CHANGE  // Controll button interrupt mode
-   
+// -----Controll button preferences-----
+#define BT1_INTERRUPT   1 // Interrupt number
+
 // -----Classes------
 class LedString { // LED string class 
                   // Contains methods for controlling the 
@@ -140,7 +139,7 @@ public:
   
 };
 
-class MedianFilter {  //Median filter class
+class MedianFilter {  // Median filter class
 private:
   int32_t *values = NULL; // pointer at the first saved value
   uint8_t val_number = 0; // number of values
@@ -246,43 +245,6 @@ public:
     return change_hour;
   }
   
-  uint8_t get_forecast_range( ) { // returning range of pressure change forecast
-    if ( change_hour <= -200 )
-      return 0;
-    if ( change_hour <= -175 )
-      return 1;
-    if ( change_hour <= -150 )
-      return 2;
-    if ( change_hour <= -125 )
-      return 3;
-    if ( change_hour <= -100 )
-      return 4;
-    if ( change_hour <= -75 )
-      return 5;
-    if ( change_hour <= -50 )
-      return 6;
-    if ( change_hour <= -25 )
-      return 7;
-    if ( change_hour < 25 && change_hour > -25 )
-      return 8;
-    if ( change_hour >= 200 )
-      return 16;
-    if ( change_hour >= 175 )
-      return 15;
-    if ( change_hour >= 150 )
-      return 14;
-    if ( change_hour >= 125 )
-      return 13;
-    if ( change_hour >= 100 )
-      return 12;
-    if ( change_hour >= 75 )
-      return 11;
-    if ( change_hour >= 50 )
-      return 10;
-    if ( change_hour >= 25 )
-      return 9;
-  }
-  
   void begin( uint32_t _pressure )  // set first pressure value (in Pa)
   {
     for ( uint8_t i = 0; i < measurement_number; i++ )
@@ -297,6 +259,71 @@ public:
   }  
 };
 
+class TTP223 {  // TTP223 Sensor touch handler
+                // for Arduino Nano/Uno 
+                // based on exteral interrupt and millis( ) func.
+                // Two modes of recognition of 
+                // button pressing: [short touching] and [long press]
+                // *****************************************
+                // Thanks to Whandall for help to use
+                // attachInterrupt( ) within this class
+private:
+  void ( *long_press )( void ); // pointer to a long press action function 
+  void ( *touching )( void );      // pointer to a touch action function
+
+  static TTP223* anchor;
+  uint8_t  irq_num  = 0;  // exteral interrupt number for attachInterrupt() func
+  uint8_t  connect_pin    = 0;  // button pin
+
+  // Time counters
+  volatile uint64_t press_time   = 0; // button press time
+  volatile uint64_t release_time = 0; // button release time
+  
+  void ttp223_touch( void ) { // touch handler func
+    if ( digitalRead( connect_pin ) ) { // if button pressed
+      press_time = millis( ); // saving time
+    } else {  //if button released
+      release_time = millis( ); // saving time
+      if ( release_time - press_time >= 600 ) { // If button released after 600 and more milliseconds
+        long_press( );  // that was a long press
+      } else {  // else 
+        touching( ); // that was short touching
+      } 
+    }
+  }
+
+  static void interrupt_func( ) { // Whandall's method to use attachInterrupt( ) within class
+    anchor -> ttp223_touch( );
+  }
+  
+public:
+  void begin( ) { // attaching interrupt
+    if ( irq_num == 0 || irq_num == 1 )
+    {
+      EIFR |= ( 1 << irq_num ); 
+      attachInterrupt( irq_num, TTP223::interrupt_func, CHANGE );
+    }
+  }
+
+  TTP223( uint8_t _irq_num,                 // interrupt number (0 or 1)
+          void ( *_touching )( void ),      // pointer to the button press function
+          void ( *_long_press )( void ) ) { // pointer to the button long-press function
+    touching       = _touching; 
+    long_press  = _long_press;
+    
+    irq_num = _irq_num;
+    connect_pin = irq_num + 2;
+    
+    anchor = this; // Whandall's method to use attachInterrupt( ) within class
+  }
+  
+};
+TTP223* TTP223::anchor = NULL;  // Whandall's method to use attachInterrupt( ) within class
+
+// -----Button functions-----
+void button_long_press( );
+void button_touching( );
+
 // -----Objects------
 LedString prs_led( 9 ); // pressure indication string
 LedString temp_led( 7 );  // temperature indication string
@@ -307,10 +334,11 @@ PressureForecast forecast( FORECAST_VAL_NUMBER, FORECAST_UPDATE_INTERVAL );  // 
 MedianFilter avr_pressure( 10 );  // median filter for BMP180 barometer data
 MedianFilter avr_luminosity( 10 );  // median filter for light-dependent resistor data
 
+TTP223 button( BT1_INTERRUPT, button_touching, button_long_press ); // TTP223 button
+
 // -----Global variables-----
 uint16_t  pressure = 0;       // current pressure in hPa
 int16_t   temperature = 0;    // current temperature in *C
-
 uint16_t  luminosity = 1023;  // current illumination value (from ADC: 0..1023)
 
 bool      night_mode = 0;     // night mode flag (0 - LED strings ON, 1 - LED strings OFF)
@@ -319,8 +347,13 @@ bool      prs_disp_mode = 0;  // pressure LED string display mode
                               // 0 - current pressure (hPa), 1 - pressure change speed (Pa/h) 
  
 // -----Functions-----
-void button_touch( ) {
-  
+void button_long_press( ) {
+  digitalWrite( 9, !digitalRead(9) ); // long press test
+}
+
+
+void button_touching( ) {
+  digitalWrite( 10, !digitalRead(10) );  // short touch test
 }
 
 uint16_t pressure_upd( ) {  // pressure update function
@@ -340,6 +373,62 @@ void luminosity_upd( uint16_t& _luminosity ) {  // luminosity update function
     if ( avr_luminosity.new_val( analogRead( LDR ) ) ) //updating luminosity
       _luminosity = avr_luminosity.get_result( );      //using median filter
   }
+}
+
+uint8_t forecast_range( int16_t change_hour ) { // returning range of pressure change forecast
+  if ( change_hour <= -200 )
+    return 0;
+  if ( change_hour <= -175 )
+    return 1;
+  if ( change_hour <= -150 )
+    return 2;
+  if ( change_hour <= -125 )
+    return 3;
+  if ( change_hour <= -100 )
+    return 4;
+  if ( change_hour <= -75 )
+    return 5;
+  if ( change_hour <= -50 )
+    return 6;
+  if ( change_hour <= -25 )
+    return 7;
+  if ( change_hour < 25 && change_hour > -25 )
+    return 8;
+  if ( change_hour >= 200 )
+    return 16;
+  if ( change_hour >= 175 )
+    return 15;
+  if ( change_hour >= 150 )
+    return 14;
+  if ( change_hour >= 125 )
+    return 13;
+  if ( change_hour >= 100 )
+    return 12;
+  if ( change_hour >= 75 )
+    return 11;
+  if ( change_hour >= 50 )
+    return 10;
+  if ( change_hour >= 25 )
+    return 9; 
+}
+
+uint8_t temp_range( int16_t temp ) { // returning range of temperature
+  if ( temp < 16 )
+    return 0;
+  if ( temp == 16 )
+    return 1;
+  if ( temp <= 18 )
+    return 2;
+  if ( temp <= 20 )
+    return 3;
+  if ( temp > 20 || temp < 24 )
+    return 4;
+  if ( temp >= 28 )
+    return 8;
+  if ( temp >= 26 )
+    return 6;
+  if ( temp >= 24 )
+    return 7;
 }
 
 void setup( ) {
@@ -400,13 +489,14 @@ void setup( ) {
 
   digitalWrite( L_PWR, 0 ); // turning off PWR LED
   
-  //  attach interrupt for control button
-  attachInterrupt( BT1_INTERRUPT, button_touch, BT1_TOUCH_MODE );
+  button.begin( );  //  attach interrupt for control button
+  
 }
 
 void loop( ) { 
   luminosity_upd( luminosity ); //updating luminosity
-  
+
+  // nigth mode prototype test 
   if ( luminosity < 95 )
     digitalWrite( L_PWR, 0 );
   else if ( luminosity > 127 )
