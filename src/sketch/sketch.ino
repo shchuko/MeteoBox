@@ -1,17 +1,17 @@
 /* MeteoBox  
- *  Version: 0.1
+ *  Version: 0.6
  *  Author: Vladislav Yaroshchuk (Shchuko)
  *  Created: 2018
  *  Website: https://github.com/shchuko 
  *  
- *  7/04/2018 ShchukoSchool: Added new classes PressureForecast and MedianFilter
+ *  8/04/2018 shchuko: Added new class TTP223. Bug fixes
  */
 
 /* PIN CONFIGURATION
  *   D1:  L PWR 
  *   D0:  L +22*C
  *   D2:  L +-25 Pa/h (also: 1010hPa)
- *   D3:  BUTTON1 (INTERRUPT MODE)
+ *   D3:  TTP223 BUTTON (INTERRUPT MODE)
  *   D4:  L +50 Pa/h (also: 1020hPa)
  *   D5:  L +100 Pa/h (also: 1030hPa)
  *   D6:  L +150 Pa/h (also: 1040hPa)
@@ -29,7 +29,7 @@
  *   A4: I2C BUS
  *   A5: I2C BUS
  *   A6: N/C
- *   A7: LDR 
+ *   A7: Light-dependent resistor (LDR)
  * L - LED
  * N/C - Not connected
  */
@@ -60,6 +60,7 @@
 #define FORECAST_VAL_NUMBER     6    // number of saved values
 #define FORECAST_UPDATE_INTERVAL  10 // ... in minutes
 #define PRESSURE_UPDATE_INTERVAL  1  // ... in minutes 
+
 // -----Other-----
 #define LDR     A7  // Light-dependent resistor
 #define L_PWR   1   // Power LED
@@ -259,14 +260,14 @@ public:
   }  
 };
 
-class TTP223 {  // TTP223 Sensor touch handler
-                // for Arduino Nano/Uno 
+class TTP223 {  // TTP223 sensor touch handler
+                // for Arduino based on ATmega328
                 // based on exteral interrupt and millis( ) func.
                 // Two modes of recognition of 
                 // button pressing: [short touching] and [long press]
                 // *****************************************
                 // Thanks to Whandall for help to use
-                // attachInterrupt( ) within this class
+                // attachInterrupt( ) within class
 private:
   void ( *long_press )( void ); // pointer to a long press action function 
   void ( *touching )( void );      // pointer to a touch action function
@@ -348,12 +349,12 @@ bool      prs_disp_mode = 0;  // pressure LED string display mode
  
 // -----Functions-----
 void button_long_press( ) {
-  digitalWrite( 9, !digitalRead(9) ); // long press test
+  prs_led.set_pin( 1,  !prs_led.get_pin( 1 ) ); // long press test
 }
 
 
 void button_touching( ) {
-  digitalWrite( 10, !digitalRead(10) );  // short touch test
+  prs_led.set_pin( 2,  !prs_led.get_pin( 2 ) );  // short touch test
 }
 
 uint16_t pressure_upd( ) {  // pressure update function
@@ -375,60 +376,98 @@ void luminosity_upd( uint16_t& _luminosity ) {  // luminosity update function
   }
 }
 
-uint8_t forecast_range( int16_t change_hour ) { // returning range of pressure change forecast
-  if ( change_hour <= -200 )
+uint8_t forecast_range( int16_t change_hour, bool& blink_mode ) { // returning range of pressure change forecast
+  blink_mode = 0; // LED blink off
+  
+  if ( change_hour <= -200 ) {
+    if ( change_hour <= -225 )
+      blink_mode = 5; // full LED string blink
     return 0;
-  if ( change_hour <= -175 )
+  }
+  
+  if ( change_hour <= -150 ) {
+    if ( change_hour <= -175 )
+      blink_mode = 1; // basic one LED blink
     return 1;
-  if ( change_hour <= -150 )
+  }
+  
+  if ( change_hour <= -100 ) {
+    if ( change_hour <= -125 )
+      blink_mode = 1; // basic one LED blink
     return 2;
-  if ( change_hour <= -125 )
+  }
+  
+  if ( change_hour <= -50 ) {
+    if ( change_hour <= -75 )
+      blink_mode = 1; // basic one LED blink
     return 3;
-  if ( change_hour <= -100 )
+  }
+  
+  if ( change_hour > -50 && change_hour < 50 ) {
+    if ( change_hour <= -25 )
+      blink_mode = 2; // left LED blink
+    else if ( change_hour >= 25 )
+      blink_mode = 3; // right LED blink
+    else
+      blink_mode = 4; // right&left LEDs blink
     return 4;
-  if ( change_hour <= -75 )
+    
+  }
+  
+  if ( change_hour >= 200 ) {
+    if ( change_hour >= 225 )
+      blink_mode = 5; // full LED string blink
     return 5;
-  if ( change_hour <= -50 )
+  }
+
+  if ( change_hour >= 150 ) {
+    if ( change_hour >= 175 )
+      blink_mode = 1; // basic one LED blink
     return 6;
-  if ( change_hour <= -25 )
+  }
+  
+  if ( change_hour >= 100 ) {
+    if ( change_hour >= 125 )
+      blink_mode = 1; // basic one LED blink
     return 7;
-  if ( change_hour < 25 && change_hour > -25 )
+  }
+
+  if ( change_hour >= 50 ) {  
+    if ( change_hour >= 75 )
+      blink_mode = 1; // basic one LED blink
     return 8;
-  if ( change_hour >= 200 )
-    return 16;
-  if ( change_hour >= 175 )
-    return 15;
-  if ( change_hour >= 150 )
-    return 14;
-  if ( change_hour >= 125 )
-    return 13;
-  if ( change_hour >= 100 )
-    return 12;
-  if ( change_hour >= 75 )
-    return 11;
-  if ( change_hour >= 50 )
-    return 10;
-  if ( change_hour >= 25 )
-    return 9; 
+  }  
 }
 
-uint8_t temp_range( int16_t temp ) { // returning range of temperature
-  if ( temp < 16 )
+uint8_t temp_range( int16_t temp, bool& blink_flag ) { // returning range of temperature
+  blink_flag = 0; // LED blink off
+  
+  if ( temp <= 16 ) {
+    if ( temp < 16 )
+      blink_flag = 1; // LED blink on
     return 0;
-  if ( temp == 16 )
-    return 1;
+  }
+    
   if ( temp <= 18 )
-    return 2;
+    return 1;
+    
   if ( temp <= 20 )
+    return 2;
+    
+  if ( temp > 20 && temp < 24 )
     return 3;
-  if ( temp > 20 || temp < 24 )
-    return 4;
-  if ( temp >= 28 )
-    return 8;
-  if ( temp >= 26 )
+    
+  if ( temp >= 28 ) {
+    if ( temp > 28 )
+      blink_flag = 1; // LED blink on
     return 6;
+  }
+    
+  if ( temp >= 26 )
+    return 5;
+    
   if ( temp >= 24 )
-    return 7;
+    return 4;
 }
 
 void setup( ) {
