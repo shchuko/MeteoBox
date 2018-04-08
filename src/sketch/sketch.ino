@@ -1,17 +1,19 @@
 /* MeteoBox  
- *  Version: 0.6
+ *  Version: 0.7
  *  Author: Vladislav Yaroshchuk (Shchuko)
  *  Created: 2018
  *  Website: https://github.com/shchuko 
  *  
- *  8/04/2018 shchuko: Added new class TTP223. Bug fixes
+ *  9/04/2018 shchuko: TTP223 class upgrade (not uses interrupt now). 
+ *                     LEDString class upgrade
+ *                     New bootanimation
  */
 
 /* PIN CONFIGURATION
  *   D1:  L PWR 
  *   D0:  L +22*C
  *   D2:  L +-25 Pa/h (also: 1010hPa)
- *   D3:  TTP223 BUTTON (INTERRUPT MODE)
+ *   D3:  TTP223 BUTTON 
  *   D4:  L +50 Pa/h (also: 1020hPa)
  *   D5:  L +100 Pa/h (also: 1030hPa)
  *   D6:  L +150 Pa/h (also: 1040hPa)
@@ -67,7 +69,7 @@
 #define Pa_to_hPa 0.01 
 
 // -----Controll button preferences-----
-#define BT1_INTERRUPT   1 // Interrupt number
+#define BT1_PIN  3 // Interrupt number
 
 // -----Classes------
 class LedString { // LED string class 
@@ -135,6 +137,22 @@ public:
       LED_string[ _byte_num ] = new_byte;
       for ( uint8_t i = 0; i < 8; i++ )
         digitalWrite( pins[ 8*_byte_num + i ],(( new_byte >> i ) & ( 1 << 0 )) );
+    }
+  }
+
+  void on( ) {
+    for ( uint8_t i = 0; i < number; i++ ) {
+      if ( !(i % 8) ) 
+         LED_string[ i / 8 ] = 0xFF;
+      digitalWrite( pins[ i ],  1 );
+    }
+  }
+
+  void off( ) {
+    for ( uint8_t i = 0; i < number; i++ ) {
+      if ( !(i % 8) ) 
+         LED_string[ i / 8 ] = 0;
+      digitalWrite( pins[ i ],  0 );
     }
   }
   
@@ -260,82 +278,93 @@ public:
   }  
 };
 
-class TTP223 {  // TTP223 sensor touch handler
-                // for Arduino based on ATmega328
-                // based on exteral interrupt and millis( ) func.
-                // Two modes of recognition of 
-                // button pressing: [short touching] and [long press]
-                // *****************************************
-                // Thanks to Whandall for help to use
-                // attachInterrupt( ) within class
+class TTP223 {  // TTP223 sensor click handler
+                // based on  millis( ) func.
+                // Three modes of recognition of button pressing:
+                // [short click], [double click], [long press]
 private:
-  void ( *long_press )( void ); // pointer to a long press action function 
-  void ( *touching )( void );      // pointer to a touch action function
+  void ( *long_press )( void );    // pointer to a long-press action function 
+  void ( *short_click )( void );   // pointer to a short-click action function
+  void ( *double_click )( void );  // pointer to a double-click action function
+    
+  uint8_t pin = 0;  // pin number
 
-  static TTP223* anchor;
-  uint8_t  irq_num  = 0;  // exteral interrupt number for attachInterrupt() func
-  uint8_t  connect_pin    = 0;  // button pin
-
-  // Time counters
-  volatile uint64_t press_time   = 0; // button press time
-  volatile uint64_t release_time = 0; // button release time
+  bool touch_flag = 0;  
+  bool double_click_flag = 0;
   
-  void ttp223_touch( void ) { // touch handler func
-    if ( digitalRead( connect_pin ) ) { // if button pressed
-      press_time = millis( ); // saving time
-    } else {  //if button released
-      release_time = millis( ); // saving time
-      if ( release_time - press_time >= 600 ) { // If button released after 600 and more milliseconds
-        long_press( );  // that was a long press
-      } else {  // else 
-        touching( ); // that was short touching
+  bool last_state = 0;
+  
+  uint64_t press_time = 0; // last button touching time 
+
+public:
+  
+  TTP223( uint8_t _pin,                     // interrupt number (0 or 1)
+          void ( *_short_click )( void ),   // pointer to the button short-click function
+          void ( *_double_click )( void ),  // pointer to the button double-click function
+          void ( *_long_press )( void ) ) { // pointer to the button long-press function
+    short_click  = _short_click; 
+    double_click = _double_click;
+    long_press   = _long_press;
+   
+    pin = _pin;
+  }
+
+  void loop_func( ) { // button click handler
+    if ( digitalRead( pin ) != last_state ) { // if buton pin state have changed
+      last_state = !last_state; // saving new state
+      digitalWrite(0, !digitalRead(0));
+      if ( last_state ) { // if button pressed
+        press_time = millis( ); // saving button press time
+        touch_flag = 1; // press (click) flag
       } 
     }
-  }
-
-  static void interrupt_func( ) { // Whandall's method to use attachInterrupt( ) within class
-    anchor -> ttp223_touch( );
-  }
-  
-public:
-  void begin( ) { // attaching interrupt
-    if ( irq_num == 0 || irq_num == 1 )
-    {
-      EIFR |= ( 1 << irq_num ); 
-      attachInterrupt( irq_num, TTP223::interrupt_func, CHANGE );
+    
+    if ( touch_flag && millis( ) - press_time > 800 ) {  // if 800 ms least after last click
+      long_press( );  // long-press function
+      touch_flag = 0; 
     }
-  }
 
-  TTP223( uint8_t _irq_num,                 // interrupt number (0 or 1)
-          void ( *_touching )( void ),      // pointer to the button press function
-          void ( *_long_press )( void ) ) { // pointer to the button long-press function
-    touching       = _touching; 
-    long_press  = _long_press;
+    if ( double_click_flag && millis() - press_time  > 400 ) {  // if double-click time has expired 
+                                                                // (it's not enough time to double-click
+                                                                // - more than 400 ms left)
+      double_click_flag = 0;                                   
+                
+      short_click( ); // short-click function
+    }
     
-    irq_num = _irq_num;
-    connect_pin = irq_num + 2;
-    
-    anchor = this; // Whandall's method to use attachInterrupt( ) within class
+    if ( touch_flag ) // if the button was pressed
+      if ( double_click_flag ) {  // if double-click is possible
+        double_click_flag = 0;  
+        touch_flag = 0; 
+        double_click( );  // double-click function
+        
+      } else if ( !last_state ) { // else if button was released
+        touch_flag = 0;
+          
+        if ( millis( ) - press_time <= 400 ) // if it's enough time to double-click 
+          double_click_flag = 1;  // setting up double-click flag
+        else // else if it's not enough time to double-click
+          short_click( ); // short-click function
+      }
   }
-  
 };
-TTP223* TTP223::anchor = NULL;  // Whandall's method to use attachInterrupt( ) within class
 
 // -----Button functions-----
 void button_long_press( );
-void button_touching( );
+void button_short_click( );
+void button_double_click( );
 
 // -----Objects------
-LedString prs_led( 9 ); // pressure indication string
-LedString temp_led( 7 );  // temperature indication string
+LedString prs_led( 9 ); // pressure indication string - 9 LEDs
+LedString temp_led( 7 );  // temperature indication string - 7 LEDs
 
 Adafruit_BMP085 bmp;  // BMPxxx sensor
 PressureForecast forecast( FORECAST_VAL_NUMBER, FORECAST_UPDATE_INTERVAL );  //  pressure change forecast
 
-MedianFilter avr_pressure( 10 );  // median filter for BMP180 barometer data
-MedianFilter avr_luminosity( 10 );  // median filter for light-dependent resistor data
+MedianFilter avr_pressure( 10 );  // median filter for BMP180 barometer data - 10 values save
+MedianFilter avr_luminosity( 10 );  // median filter for light-dependent resistor data - 10 values save
 
-TTP223 button( BT1_INTERRUPT, button_touching, button_long_press ); // TTP223 button
+TTP223 button( BT1_PIN, button_short_click, button_double_click, button_long_press ); // TTP223 button
 
 // -----Global variables-----
 uint16_t  pressure = 0;       // current pressure in hPa
@@ -346,15 +375,18 @@ bool      night_mode = 0;     // night mode flag (0 - LED strings ON, 1 - LED st
 
 bool      prs_disp_mode = 0;  // pressure LED string display mode
                               // 0 - current pressure (hPa), 1 - pressure change speed (Pa/h) 
- 
+
 // -----Functions-----
-void button_long_press( ) {
-  prs_led.set_pin( 1,  !prs_led.get_pin( 1 ) ); // long press test
+void button_short_click( ) {
+  prs_led.set_pin( 0,  !prs_led.get_pin( 0 ) ); // short-click test
 }
 
+void button_double_click( ) {
+  prs_led.set_pin( 1,  !prs_led.get_pin( 1 ) ); // double-click test
+}
 
-void button_touching( ) {
-  prs_led.set_pin( 2,  !prs_led.get_pin( 2 ) );  // short touch test
+void button_long_press( ) {
+  prs_led.set_pin( 2,  !prs_led.get_pin( 2 ) ); // long press test
 }
 
 uint16_t pressure_upd( ) {  // pressure update function
@@ -491,9 +523,43 @@ void setup( ) {
   prs_led.init_pin( L_100P, 6 );
   prs_led.init_pin( L_150P, 7 );
   prs_led.init_pin( L_200P, 8 );
-
+  
   // set pin mode for power LED pin
   pinMode( L_PWR, OUTPUT );
+
+  delay( 500 );
+  
+  digitalWrite( L_PWR, 1 );
+  delay( 1000 );
+  
+  temp_led.on( );
+  delay( 1000 );
+  
+  prs_led.on( );
+  delay( 1000 );
+
+  prs_led.off( );
+  delay( 1000 );
+  
+  temp_led.off( );
+  delay( 1000 );
+  
+  digitalWrite( L_PWR, 0 );
+  delay( 200 );
+
+  digitalWrite( L_PWR, 1 );
+  delay( 200 );
+  
+  digitalWrite( L_PWR, 0 );
+  delay( 200 );
+
+  digitalWrite( L_PWR, 1 );
+  delay( 200 );
+
+  digitalWrite( L_PWR, 0 );
+  delay( 200 );
+
+  digitalWrite( L_PWR, 1 );
   
   avr_pressure.init( bmp.readPressure( ) );
   avr_luminosity.init( analogRead( A7 ) );
@@ -503,43 +569,20 @@ void setup( ) {
   luminosity = avr_luminosity.get_result( ); //saving current luminosity
 
   forecast.begin( pressure );
-  //  indication testing:
-  for ( uint8_t i = 0; i < 9; i++ ) { // pressure indication string - turning on
-     prs_led.set_pin( i, 1 );
-     delay( 100 );
-  }
-
-  for ( uint8_t i = 0; i < 7; i++ ) { // temperature indication string - turning on
-     temp_led.set_pin( i, 1 );
-     delay( 100 );
-  }
-
-  digitalWrite( L_PWR, 1 ); // turning on PWR LED
-
-  for ( uint8_t i = 0; i < 9; i++ ) { // pressure indication string - turning off
-     prs_led.set_pin( i, 0 );
-     delay( 100 );
-  }
-
-  for ( uint8_t i = 0; i < 7; i++ ) { // temperature indication string - turning off
-     temp_led.set_pin( i, 0 );
-     delay( 100 );
-  }
-
-  digitalWrite( L_PWR, 0 ); // turning off PWR LED
   
-  button.begin( );  //  attach interrupt for control button
   
 }
 
-void loop( ) { 
+void loop( ) {
+  button.loop_func( );
+  
   luminosity_upd( luminosity ); //updating luminosity
-
+      
   // nigth mode prototype test 
   if ( luminosity < 95 )
     digitalWrite( L_PWR, 0 );
   else if ( luminosity > 127 )
     digitalWrite( L_PWR, 1 );
-  else {} 
+  else { } 
 
 }
