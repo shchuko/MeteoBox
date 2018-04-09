@@ -1,12 +1,13 @@
 /* MeteoBox  
- *  Version: 0.7
+ *  Version: 0.8
  *  Author: Vladislav Yaroshchuk (Shchuko)
  *  Created: 2018
  *  Website: https://github.com/shchuko 
  *  
- *  9/04/2018 shchuko: TTP223 class upgrade (not uses interrupt now). 
- *                     LEDString class upgrade
- *                     New bootanimation
+ *  9/04/2018 shchuko: Added algorithm of sensors data updating. 
+ *                     Bootanimation edits
+ *                     Added test-by-serial functions
+ *                     Bug fixes                     
  */
 
 /* PIN CONFIGURATION
@@ -59,9 +60,10 @@
 #define L_200PM 11
 
 // -----Pressure forecast-----
-#define FORECAST_VAL_NUMBER     6    // number of saved values
-#define FORECAST_UPDATE_INTERVAL  10 // ... in minutes
-#define PRESSURE_UPDATE_INTERVAL  1  // ... in minutes 
+#define FORECAST_VAL_NUMBER       7   // Number of saved values
+#define DATA_UPDATE_INTERVAL      5   // ... in minutes 
+#define FORECAST_UPDATE_INTERVAL  10  // ... in minutes
+                                      // Condition: FORECAST_UPDATE_INTERVAL % DATA_UPDATE_INTERVAL = 0 !!!
 
 // -----Other-----
 #define LDR     A7  // Light-dependent resistor
@@ -158,14 +160,14 @@ public:
   
 };
 
-class MedianFilter {  // Median filter class
+class MedianFilter {  // Median filter class ( all arguments > 0 )
 private:
-  int32_t *values = NULL; // pointer at the first saved value
+  uint32_t *values = NULL; // pointer at the first saved value
   uint8_t val_number = 0; // number of values
   
   uint8_t new_val_pos = 0;  // position of new value in values[ ] ( used in function new_val )
   
-  int32_t result = 0; // result value 
+  uint32_t result = 0; // result value 
 
   void calculate( ) { // calculating median value
     // bubble sort algorithm
@@ -174,7 +176,7 @@ private:
       { 
         if( values[ i ] > values[ j ] )
         {
-          int32_t term_val = values[ i ];
+          uint32_t term_val = values[ i ];
           values[ i ] = values[ j ];
           values[ j ] = term_val;
         }
@@ -188,12 +190,13 @@ public:
     values = new uint32_t[ _val_number ]; // allocate memory for saving values    
   }
 
-  void init( int32_t val ) {
+  void init( uint32_t val ) {
     for ( uint8_t i = 0; i < val_number; i++ )
       values[i] = val;
     result = val;
   }
-  bool new_val( int32_t val ) { // updating (saving) new value
+  
+  bool new_val( uint32_t val ) { // updating (saving) new value
                                         // returning 1 - updating complete, 0 - updating not complete 
       values[ new_val_pos ] = val; // saving new value
       new_val_pos++; // incriminate value pos counter
@@ -207,7 +210,7 @@ public:
     return 0; // returning 0
   } 
 
-  int32_t get_result( ) {  // returning calculated median value
+  uint32_t get_result( ) {  // returning calculated median value
     return result;
   }
 
@@ -248,7 +251,7 @@ public:
 
     calculate( ); // re-calculating  forecast
     
-    if ( meas_updts_counter < measurement_number );  // if full update did not complete
+    if ( meas_updts_counter < measurement_number )  // if full update did not complete
       meas_updts_counter++; 
   }
 
@@ -312,14 +315,14 @@ public:
   void loop_func( ) { // button click handler
     if ( digitalRead( pin ) != last_state ) { // if buton pin state have changed
       last_state = !last_state; // saving new state
-      digitalWrite(0, !digitalRead(0));
+
       if ( last_state ) { // if button pressed
         press_time = millis( ); // saving button press time
         touch_flag = 1; // press (click) flag
       } 
     }
     
-    if ( touch_flag && millis( ) - press_time > 800 ) {  // if 800 ms least after last click
+    if ( touch_flag && millis( ) - press_time > 700 ) {  // if 800 ms least after last click
       long_press( );  // long-press function
       touch_flag = 0; 
     }
@@ -367,30 +370,97 @@ MedianFilter avr_luminosity( 10 );  // median filter for light-dependent resisto
 TTP223 button( BT1_PIN, button_short_click, button_double_click, button_long_press ); // TTP223 button
 
 // -----Global variables-----
-uint16_t  pressure = 0;       // current pressure in hPa
-int16_t   temperature = 0;    // current temperature in *C
-uint16_t  luminosity = 1023;  // current illumination value (from ADC: 0..1023)
+uint32_t pressure = 0;       // current pressure in hPa
+int16_t  temperature = 0;    // current temperature in *C
+uint16_t luminosity = 1023;  // current illumination value (from ADC: 0..1023)
 
-bool      night_mode = 0;     // night mode flag (0 - LED strings ON, 1 - LED strings OFF)
+bool     _forecast_actual_flag = 0;      // forecast actual flag
+uint8_t  _forecast_range = 4;            // forecast range (for LED string)
+uint8_t  _forecast_range_blink_mode = 0; // forecast blink mode 
 
-bool      prs_disp_mode = 0;  // pressure LED string display mode
-                              // 0 - current pressure (hPa), 1 - pressure change speed (Pa/h) 
+uint8_t  _pressure_range = 4;            // pressure range (for LED string)
+bool     _pressure_range_blink_flag = 0; // pressure range blink flag
+
+uint8_t  _temp_range = 3;            // temperature range (for LED string)
+bool     _temp_range_blink_flag = 0; // temperature range blink flag
+
+bool night_mode_enable = 0; // night mode flag (0 - enable, 1 - disable)
+bool night_mode_state = 0;  // current situation flag (0 - LEDs enable, 1 - LEDs disable)
+
+bool display_mode = 0;  // genegal diplay mode
+                        // 0 - current data, 1 - data 3h ago 
+bool prs_disp_mode = 0; // pressure display mode
+                        // 0 - current pressure (hPa), 1 - pressure change speed (Pa/h) 
 
 // -----Functions-----
+void serial_test_func( ) {
+  Serial.println( );
+  Serial.println( "******************************" );
+  Serial.println( "Data update..." );
+  Serial.println( );
+  
+  Serial.print( "Pressure: ");
+  Serial.println( pressure );
+  Serial.print(" Pressure range: ");
+  Serial.println( _pressure_range );
+  Serial.print(" Pressure range blink flag: ");
+  Serial.println( _pressure_range_blink_flag );
+
+  Serial.print( "Temperature: ");
+  Serial.println( temperature );
+  Serial.print(" Temperature range: ");
+  Serial.println( _temp_range );
+  Serial.print(" Temperature range blink flag: ");
+  Serial.println( _temp_range_blink_flag );
+
+  Serial.print( "Forecast: " );
+  Serial.println( forecast.get_forecast( ) );
+  Serial.print( " Forecast actual flag: " );
+  Serial.println( _forecast_actual_flag );
+  Serial.print( " Forecast range: " );
+  Serial.println( _forecast_range );
+  Serial.print( " Forecast range blink mode: " );
+  Serial.println( _forecast_range_blink_mode );
+  
+}
+
+void serial_flag_test_func( ) {
+  Serial.println( );
+  Serial.println( "******************************" );
+  Serial.println( "Button touched..." );
+  Serial.println( );
+  
+  Serial.print( "Night mode enable flag: " );
+  Serial.println( night_mode_enable );
+
+  Serial.print( "Display mode flag: " );
+  Serial.println( display_mode );
+  
+  Serial.print( "Pressure display mode flag: " );
+  Serial.println( prs_disp_mode );
+}
+
 void button_short_click( ) {
-  prs_led.set_pin( 0,  !prs_led.get_pin( 0 ) ); // short-click test
+  prs_disp_mode = !prs_disp_mode; // changing pressure display mode
+  //serial_flag_test_func( );
 }
 
 void button_double_click( ) {
-  prs_led.set_pin( 1,  !prs_led.get_pin( 1 ) ); // double-click test
+  display_mode = !display_mode; // changing display mode
+  //serial_flag_test_func( );
 }
 
 void button_long_press( ) {
-  prs_led.set_pin( 2,  !prs_led.get_pin( 2 ) ); // long press test
+  if ( !display_mode )  // if general display mode is "current data"
+    night_mode_enable = !night_mode_enable; // changing night mode
+  else  // else
+    display_mode = !display_mode; // changing display mode
+  //serial_flag_test_func( );
 }
 
-uint16_t pressure_upd( ) {  // pressure update function
-  while ( !avr_pressure.new_val(bmp.readPressure( )) ) { }      //updating pressure
+uint32_t pressure_upd( ) {  // pressure update function
+  while ( !avr_pressure.new_val( bmp.readPressure( ) ) ) { } //updating pressure
+  uint32_t res = avr_pressure.get_result( );
   return avr_pressure.get_result( ); //using median filter
 }
 
@@ -408,9 +478,14 @@ void luminosity_upd( uint16_t& _luminosity ) {  // luminosity update function
   }
 }
 
-uint8_t forecast_range( int16_t change_hour, bool& blink_mode ) { // returning range of pressure change forecast
-  blink_mode = 0; // LED blink off
-  
+uint8_t forecast_range( int16_t change_hour, uint8_t& blink_mode ) {  // returning the range of pressure change 
+                                                                      // LED string func
+  blink_mode = 0; // 0 - LED blink off
+                  // 1 - basic one LED blink
+                  // 2 - left LED blink
+                  // 3 - right LED blink
+                  // 4 - right&left LEDs blink
+                  // 5 - full LED string blink
   if ( change_hour <= -200 ) {
     if ( change_hour <= -225 )
       blink_mode = 5; // full LED string blink
@@ -471,37 +546,101 @@ uint8_t forecast_range( int16_t change_hour, bool& blink_mode ) { // returning r
   }  
 }
 
-uint8_t temp_range( int16_t temp, bool& blink_flag ) { // returning range of temperature
+uint8_t temp_range( int16_t temp, bool& blink_flag ) {  // returning the range of temperature
+                                                        // LED string func
   blink_flag = 0; // LED blink off
   
   if ( temp <= 16 ) {
     if ( temp < 16 )
-      blink_flag = 1; // LED blink on
-    return 0;
+      blink_flag = 1; // 16*C LED blink enable
+    return 0; // 16*C LED enable
   }
     
   if ( temp <= 18 )
-    return 1;
+    return 1; // 18*C LED enable
     
   if ( temp <= 20 )
-    return 2;
+    return 2; // 20*C LED enable
     
   if ( temp > 20 && temp < 24 )
-    return 3;
+    return 3; // 22*C LED enable
     
   if ( temp >= 28 ) {
     if ( temp > 28 )
-      blink_flag = 1; // LED blink on
-    return 6;
+      blink_flag = 1; // 28*C LED blink enable
+    return 6; // 28*C LED enable
   }
     
   if ( temp >= 26 )
-    return 5;
-    
+    return 5; // 26*C LED enable
+      
   if ( temp >= 24 )
-    return 4;
+    return 4; // 24*C LED enable
 }
 
+uint8_t pressure_range( uint16_t pressure_hPa, bool& blink_flag ) { // returning the range of pressure
+                                                                    // LED string func
+  blink_flag = 0; // LED blink off
+  
+  if ( pressure_hPa <= 975 ) {
+    if ( pressure_hPa < 970 )
+      blink_flag = 1; // 970 hPa LED blink enable
+    return 0; // 970 hPa LED enable
+  }
+    
+  if ( pressure_hPa <= 985 )
+    return 1; // 980 hPa LED enable
+    
+  if ( pressure_hPa <= 995 )
+    return 2; // 990 hPa LED enable
+    
+  if ( pressure_hPa <= 1005 )
+    return 3; // 1000 hPa LED enable
+    
+  if ( pressure_hPa > 1005 && pressure_hPa < 1015 )
+    return 4; // 1010 hPa LED enable
+      
+  if ( pressure_hPa >= 1045 ) {
+    if ( pressure_hPa > 1050 )
+      blink_flag = 1; // 1050 hPa LED blink enable
+    return 8; // 1050 hPa LED enable
+  }
+    
+  if ( pressure_hPa >= 1035 )
+    return 7; // 1040 hPa LED enable
+    
+  if ( pressure_hPa >= 1025 )
+    return 6; // 1030 hPa LED enable
+    
+  if ( pressure_hPa >= 1015 )
+    return 5; // 1020 hPa LED enable
+}
+
+void bootanimation( ) {
+  digitalWrite( L_PWR, 1 );
+  delay( 500 );
+  
+  temp_led.on( );
+  delay( 500 );
+  
+  prs_led.on( );
+  delay( 500 );
+
+  prs_led.off( );
+  delay( 500 );
+  
+  temp_led.off( );
+  delay( 500 );
+
+  for ( uint8_t i = 0; i < 15; i++ ) {
+  digitalWrite( L_PWR, 0 );
+  delay( 100 );
+
+  digitalWrite( L_PWR, 1 );
+  delay( 100 );
+  }
+}
+ 
 void setup( ) {
   bmp.begin( );
   // initialisation temperature indication pins
@@ -527,62 +666,70 @@ void setup( ) {
   // set pin mode for power LED pin
   pinMode( L_PWR, OUTPUT );
 
-  delay( 500 );
+  delay( 1500 );
   
-  digitalWrite( L_PWR, 1 );
-  delay( 1000 );
+  bootanimation( );
   
-  temp_led.on( );
-  delay( 1000 );
-  
-  prs_led.on( );
-  delay( 1000 );
-
-  prs_led.off( );
-  delay( 1000 );
-  
-  temp_led.off( );
-  delay( 1000 );
-  
-  digitalWrite( L_PWR, 0 );
-  delay( 200 );
-
-  digitalWrite( L_PWR, 1 );
-  delay( 200 );
-  
-  digitalWrite( L_PWR, 0 );
-  delay( 200 );
-
-  digitalWrite( L_PWR, 1 );
-  delay( 200 );
-
-  digitalWrite( L_PWR, 0 );
-  delay( 200 );
-
-  digitalWrite( L_PWR, 1 );
-  
-  avr_pressure.init( bmp.readPressure( ) );
+  avr_pressure.init( round( bmp.readPressure( ) ) );
   avr_luminosity.init( analogRead( A7 ) );
   
-  pressure = ( uint16_t )( avr_pressure.get_result( ) );  // saving current pressure 
-  temperature = bmp.readTemperature( ); // saving current temperature
-  luminosity = avr_luminosity.get_result( ); //saving current luminosity
+  pressure = ( uint32_t )( avr_pressure.get_result( ) );  // saving current pressure 
+  temperature = round( bmp.readTemperature( )  - 2.5 );          // saving current temperature
+  luminosity = avr_luminosity.get_result( );              //saving current luminosity
 
   forecast.begin( pressure );
+
+  _pressure_range = pressure_range( round( pressure * Pa_to_hPa ), _pressure_range_blink_flag ); // updating pressure range
+  _temp_range = temp_range( temperature, _temp_range_blink_flag );  // updating temperature range
   
-  
+  _forecast_actual_flag = forecast.is_update( );
+  _forecast_range = forecast_range( forecast.get_forecast( ), _forecast_range_blink_mode );
+
+    // System test using Serial
+  //Serial.begin( 9600 ); 
+  //serial_test_func( );
+  //serial_flag_test_func( );
+  //Serial.println("BOOT COMPLETE");
 }
 
 void loop( ) {
-  button.loop_func( );
+  button.loop_func( ); 
   
   luminosity_upd( luminosity ); //updating luminosity
-      
-  // nigth mode prototype test 
-  if ( luminosity < 95 )
-    digitalWrite( L_PWR, 0 );
-  else if ( luminosity > 127 )
-    digitalWrite( L_PWR, 1 );
-  else { } 
+  
+  // nigth mode switcher with gisteresis:
+  if ( night_mode_enable ) {
+    if ( luminosity < 95 )  // if luminosity is low
+      night_mode_state = 1;
+    else if ( luminosity > 127 )  // if luminosity is high
+      night_mode_state = 0;
+  } else if ( night_mode_state ) {
+    night_mode_state = 0;
+  }
 
+  static uint64_t data_upd_counter = millis( ); // data update time counter  
+  static uint64_t forecast_upd_counter = millis( ); // data update time counter
+
+  
+  if ( millis( ) - data_upd_counter  >= DATA_UPDATE_INTERVAL * 60000 ) { // if it's time to update data 
+    pressure = pressure_upd( );  // updating pressure
+    _pressure_range = pressure_range( round( pressure * Pa_to_hPa ), _pressure_range_blink_flag ); // updating pressure range
+    
+    temperature = round( bmp.readTemperature( ) - 2.5 ); // updating temperature
+    _temp_range = temp_range( temperature, _temp_range_blink_flag );  // updating temperature range
+
+    
+    if ( millis( ) - forecast_upd_counter >= FORECAST_UPDATE_INTERVAL * 60000 ) {  // if it's time to update forecast
+      forecast.set( pressure ); // updating forecast
+      _forecast_actual_flag = forecast.is_update( );  // updating forecast actuality flag
+      _forecast_range = forecast_range( forecast.get_forecast( ), _forecast_range_blink_mode ); // updating forecast range
+      forecast_upd_counter = millis( );
+
+      //Serial.println( "-----------Forecast update-----------" );
+    }
+    data_upd_counter = millis( ); // saving current time
+    
+    //serial_test_func( );
+  }  
+  
 }
