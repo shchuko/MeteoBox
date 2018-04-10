@@ -1,13 +1,13 @@
 /* MeteoBox  
- *  Version: 0.8
+ *  Version: 0.9
  *  Author: Vladislav Yaroshchuk (Shchuko)
  *  Created: 2018
  *  Website: https://github.com/shchuko 
  *  
- *  9/04/2018 shchuko: Added algorithm of sensors data updating. 
- *                     Bootanimation edits
- *                     Added test-by-serial functions
- *                     Bug fixes                     
+ *  10/04/2018 shchuko: LED indicastion display configured:
+ *                     -switching 
+ *                     -auto-returning to current data display
+ *                     -waking from the night mode if button have touched             
  */
 
 /* PIN CONFIGURATION
@@ -72,6 +72,7 @@
 
 // -----Controll button preferences-----
 #define BT1_PIN  3 // Interrupt number
+#define L_PWR_BTN_BLINK_NUMBER 4 // PWR LED blinks count if button was touched
 
 // -----Classes------
 class LedString { // LED string class 
@@ -138,7 +139,10 @@ public:
     if ( new_byte != LED_string[ _byte_num ] ) {
       LED_string[ _byte_num ] = new_byte;
       for ( uint8_t i = 0; i < 8; i++ )
-        digitalWrite( pins[ 8*_byte_num + i ],(( new_byte >> i ) & ( 1 << 0 )) );
+        if ( 8 * _byte_num + i < number )
+          digitalWrite( pins[ 8 * _byte_num + i ],(( new_byte >> i ) & ( 1 << 0 )) );
+        else
+          break;
     }
   }
 
@@ -322,7 +326,7 @@ public:
       } 
     }
     
-    if ( touch_flag && millis( ) - press_time > 700 ) {  // if 800 ms least after last click
+    if ( touch_flag && millis( ) - press_time > 700 ) {  // if 700 ms least after last click
       long_press( );  // long-press function
       touch_flag = 0; 
     }
@@ -376,21 +380,40 @@ uint16_t luminosity = 1023;  // current illumination value (from ADC: 0..1023)
 
 bool     _forecast_actual_flag = 0;      // forecast actual flag
 uint8_t  _forecast_range = 4;            // forecast range (for LED string)
-uint8_t  _forecast_range_blink_mode = 0; // forecast blink mode 
+uint8_t  _forecast_range_blink_mode = 4; // forecast blink mode 
+
+uint8_t  _forecast_h_ago_range = 4;            // forecast range 1 hour ago (for LED string)
+uint8_t  _forecast_h_ago_range_blink_mode = 4; // forecast blink 1 hour ago mode 
 
 uint8_t  _pressure_range = 4;            // pressure range (for LED string)
 bool     _pressure_range_blink_flag = 0; // pressure range blink flag
 
+uint8_t  _pressure_h_ago_range = 4;            // pressure range 1 hour ago (for LED string)
+bool     _pressure_h_ago_range_blink_flag = 0; // pressure range 1 hour ago blink flag
+
 uint8_t  _temp_range = 3;            // temperature range (for LED string)
 bool     _temp_range_blink_flag = 0; // temperature range blink flag
 
-bool night_mode_enable = 0; // night mode flag (0 - enable, 1 - disable)
+bool night_mode_enable = 1; // night mode flag (0 - enable, 1 - disable)
 bool night_mode_state = 0;  // current situation flag (0 - LEDs enable, 1 - LEDs disable)
 
+bool     temprary_touch_awake = 0; // system awaking from the night mode if button touched
+uint64_t temprary_touch_awake_counter = 0;  
+
 bool display_mode = 0;  // genegal diplay mode
-                        // 0 - current data, 1 - data 3h ago 
+                        // 0 - current data, 1 - data 1h ago 
 bool prs_disp_mode = 0; // pressure display mode
-                        // 0 - current pressure (hPa), 1 - pressure change speed (Pa/h) 
+                        // 0 - current pressure (hPa), 1 - pressure forecast display (Pa/h)
+
+uint64_t display_return_counter = 0;  // time counter to return to current 
+                                      // data display & current pressure display
+uint8_t  display_return_mode = 0; // return mode:
+                                  // 0 - disable
+                                  // 1 - return from forecast display to the current pressure display
+                                  // 2 - return from 1h ago data display to the current data display
+
+uint64_t button_blink_counter_time = 0; // button touch - PWR LED blink time counter
+uint8_t  button_blink_counter = L_PWR_BTN_BLINK_NUMBER; // button touch - PWR LED blink(s) counter - max is L_PWR_BTN_BLINK_NUMBER
 
 // -----Functions-----
 void serial_test_func( ) {
@@ -441,20 +464,102 @@ void serial_flag_test_func( ) {
 }
 
 void button_short_click( ) {
-  prs_disp_mode = !prs_disp_mode; // changing pressure display mode
+  button_blink_counter = 0; // setting buton blink counter to zero
+  digitalWrite( L_PWR, 1 ); // switching on PWR LED
+  
+  if ( !night_mode_state || temprary_touch_awake )  // if LEDs are enabled or it is temprary awake
+  {
+    prs_disp_mode = !prs_disp_mode;
+    
+    if ( display_mode ) { // if it is 1h ago data display 
+      
+      display_return_mode = 2;  // changing return timer mode 
+      display_return_counter = millis( ); // updating time counter
+    } 
+  
+    if ( prs_disp_mode && !display_mode ) {  // if it's switching to the forecast display mode within current data display
+      display_return_mode = 1;  // changing return timer mode 
+      display_return_counter = millis( ); // updating time counter
+    } else if ( display_return_mode && !display_mode ) {  // else if it's current data display within enabled return timer
+      display_return_mode = 0;  // disabling timer
+    }
+
+    // if it's it is temprary awake, updating awake timer
+    if ( temprary_touch_awake ) temprary_touch_awake_counter = millis( );
+    
+  } else if ( night_mode_state && night_mode_enable ) { // else if luminosity is low, LEDs are disabled
+    display_mode = 0; // switching to the  current data fisplay
+    prs_disp_mode = 0;  // switching pressure display mode to the pressure mode
+    
+    temprary_touch_awake = 1; // waking up system for several seconds
+    temprary_touch_awake_counter = millis( );
+  } 
+  
+  temp_led.off( );  // clearing temperature LED string
+  prs_led.off( );   // clearing pressure LED string
   //serial_flag_test_func( );
 }
 
-void button_double_click( ) {
-  display_mode = !display_mode; // changing display mode
+void button_double_click( ) { 
+  button_blink_counter = 0; // setting buton blink counter to zero
+  digitalWrite( L_PWR, 1 ); // switching on PWR LED
+
+  if ( !night_mode_state || temprary_touch_awake )  // if LEDs are enabled or it is temprary awake
+  {
+    prs_disp_mode = 0;  // switching pressure display mode to a pressure mode
+    
+    if ( display_mode = !display_mode ) { // if it is switching to 1h ago data display 
+      display_return_mode = 2;  // changing return timer mode 
+      display_return_counter = millis( ); // updating time counter
+    } else {
+      display_return_mode = 0;
+    }
+
+    // if it's it is temprary awake, updating awake timer
+    if ( temprary_touch_awake ) temprary_touch_awake_counter = millis( );
+    
+  } else if ( night_mode_state ) { // else if luminosity is low, LEDs are disabled
+    display_mode = 0; // switching to the  current data fisplay
+    prs_disp_mode = 0;  // switching pressure display mode to the pressure mode
+    
+    temprary_touch_awake = 1; // waking up system for several seconds
+    temprary_touch_awake_counter = millis( );
+  } 
+  
+  temp_led.off( );  // clearing temperature LED string
+  prs_led.off( );   // clearing pressure LED string
   //serial_flag_test_func( );
 }
 
 void button_long_press( ) {
-  if ( !display_mode )  // if general display mode is "current data"
-    night_mode_enable = !night_mode_enable; // changing night mode
-  else  // else
-    display_mode = !display_mode; // changing display mode
+  button_blink_counter = 0; // setting buton blink counter to zero
+  digitalWrite( L_PWR, 1 ); // switching on PWR LED
+  
+  if ( !night_mode_state || temprary_touch_awake )  // if LEDs are enabled or it is temprary awake
+  {
+    if ( !display_mode ) {  // if it's current data display
+      if ( night_mode_enable = !night_mode_enable ) // changing night mode
+        temprary_touch_awake = 0; // if it's swithching off night mode, disabling temprary awake timer
+    } else {  // else if it's not current data display
+      display_mode = 0; // switching to a "current data" display
+    }
+
+    // if it's it is temprary awake, updating awake timer
+    if ( temprary_touch_awake ) temprary_touch_awake_counter = millis( );
+    
+  } else if ( night_mode_state ) { // else if luminosity is low, LEDs are disabled
+    display_mode = 0; // switching to the  current data fisplay
+    prs_disp_mode = 0;  // switching pressure display mode to the pressure mode
+    
+    night_mode_enable = 0; // disabling night mode
+    
+    temprary_touch_awake = 1; // waking up system for several seconds
+    temprary_touch_awake_counter = millis( ); // updating awake timer
+  } 
+  
+  temp_led.off( );  // clearing temperature LED string
+  prs_led.off( );   // clearing pressure LED string
+  
   //serial_flag_test_func( );
 }
 
@@ -524,25 +629,25 @@ uint8_t forecast_range( int16_t change_hour, uint8_t& blink_mode ) {  // returni
   if ( change_hour >= 200 ) {
     if ( change_hour >= 225 )
       blink_mode = 5; // full LED string blink
-    return 5;
+    return 8;
   }
 
   if ( change_hour >= 150 ) {
     if ( change_hour >= 175 )
       blink_mode = 1; // basic one LED blink
-    return 6;
+    return 7;
   }
   
   if ( change_hour >= 100 ) {
     if ( change_hour >= 125 )
       blink_mode = 1; // basic one LED blink
-    return 7;
+    return 6;
   }
 
   if ( change_hour >= 50 ) {  
     if ( change_hour >= 75 )
       blink_mode = 1; // basic one LED blink
-    return 8;
+    return 5;
   }  
 }
 
@@ -582,25 +687,25 @@ uint8_t pressure_range( uint16_t pressure_hPa, bool& blink_flag ) { // returning
                                                                     // LED string func
   blink_flag = 0; // LED blink off
   
-  if ( pressure_hPa <= 975 ) {
+  if ( pressure_hPa < 975 ) {
     if ( pressure_hPa < 970 )
       blink_flag = 1; // 970 hPa LED blink enable
     return 0; // 970 hPa LED enable
   }
     
-  if ( pressure_hPa <= 985 )
+  if ( pressure_hPa < 985 )
     return 1; // 980 hPa LED enable
     
-  if ( pressure_hPa <= 995 )
+  if ( pressure_hPa < 995 )
     return 2; // 990 hPa LED enable
     
-  if ( pressure_hPa <= 1005 )
+  if ( pressure_hPa < 1005 )
     return 3; // 1000 hPa LED enable
     
-  if ( pressure_hPa > 1005 && pressure_hPa < 1015 )
+  if ( pressure_hPa >= 1005 && pressure_hPa < 1015 )
     return 4; // 1010 hPa LED enable
       
-  if ( pressure_hPa >= 1045 ) {
+  if ( pressure_hPa > 1045 ) {
     if ( pressure_hPa > 1050 )
       blink_flag = 1; // 1050 hPa LED blink enable
     return 8; // 1050 hPa LED enable
@@ -640,7 +745,191 @@ void bootanimation( ) {
   delay( 100 );
   }
 }
- 
+
+void pressure_display( uint8_t range, bool blink_flag, bool blink_state ) {
+  uint8_t blink_led = 9 * ( range != 0 && range != 8 ) + 8 * ( range == 8 );
+
+  for ( uint8_t i = 0; i < 9; i++ ) 
+    if ( i != range && i != blink_led && prs_led.get_pin( i ) )
+      prs_led.set_pin( i , 0 ); 
+  
+  if ( blink_flag ) {
+    prs_led.set_pin( blink_led, blink_state );    
+  } else {
+    prs_led.set_pin( range, 1 );
+  }
+}
+
+void forecast_display( uint8_t range, uint8_t blink_mode,  bool blink_state ) {
+  uint16_t led_indic_string = 0x0;
+
+  for ( uint8_t i = 0; i < 9; i++ ) {
+    if ( range <= 4 ) {
+      
+      if ( i <= 4 && i >= range ) 
+        led_indic_string |= ( 1 << i );
+    
+    } else if ( range > 4 ) {
+      
+      if ( i >= 4 && i <= range )
+        led_indic_string |= ( 1 << i );
+    }
+  }
+
+  uint8_t blink_led = 9;
+  switch ( blink_mode ) {
+    case 1:
+      if ( range < 4 )
+        blink_led = range - 1;
+      else 
+        blink_led = range + 1;
+      break;
+    
+    case 2:
+      blink_led = range - 1;
+      break;
+    
+    case 3:
+      blink_led = range + 1;
+      break;
+
+    case 4:
+      if ( blink_state ) {
+        led_indic_string |= ( 1 << 3 ) | ( 1 << 5 );
+      }
+      break;
+
+    case 5:
+      if ( blink_state ) {
+        led_indic_string = 0x0;
+        led_indic_string |= ( 1 << 4 );
+      }
+      break;
+  }
+
+  if ( blink_led < 9 && blink_state )
+    led_indic_string |= ( 1 << blink_led );
+  else
+    led_indic_string &= ~( 1 << blink_led );
+
+  if ( !_forecast_actual_flag && !blink_state )
+     led_indic_string &= ~( 1 << 4 );
+     
+  prs_led.set_byte( 0, ( led_indic_string & ( 0xFF ) ) );
+  prs_led.set_byte( 1, ( ( led_indic_string >> 8 ) & ( 0xFF ) ) );
+  
+}
+
+void temp_display( uint8_t range, bool blink_flag, bool blink_state ) {
+  uint8_t blink_led = 7 * ( range != 0 && range != 6 ) + 6 * ( range == 6 );
+
+  for ( uint8_t i = 0; i < 7; i++ ) 
+    if ( i != range && i != blink_led && temp_led.get_pin( i ) )
+      temp_led.set_pin( i , 0 ); 
+  
+  if ( blink_flag ) {
+    temp_led.set_pin( blink_led, blink_state );    
+  } else {
+    temp_led.set_pin( range, 1 );
+  }   
+}
+
+void history_display( bool blink_state ) {
+  temp_led.set_pin( 0, 1 );
+  temp_led.set_pin( 2, 1 );
+  temp_led.set_pin( 4, 1 );
+  temp_led.set_pin( 6, 1 );
+}
+
+void led_display( ) {
+  static bool leds_disabled = 0;
+  static bool blink_led_state = 1;  // flag used for display blinking
+  static uint64_t blink_time_counter = millis( );
+
+  if ( temprary_touch_awake ) // if it was temprary awaiking
+    if ( millis( ) - temprary_touch_awake_counter >= 10000 ) // and 7 seconds left
+    {
+      display_mode = 0; // switching to the  current data fisplay
+      prs_disp_mode = 0;  // switching pressure display mode to the pressure mode
+    
+      temprary_touch_awake = 0; // disabling temprary awaiking mode
+    }
+
+  // return to current data display & current pressure display:
+  if ( display_return_mode == 1 ) { // from forecast display
+    if ( millis( ) - display_return_counter >= 5000 ) // if 5 seconds left
+    {                                                 // returning
+      display_mode = 0; // switching to the  current data fisplay
+      prs_disp_mode = 0;  // switching pressure display mode to the pressure mode
+      
+      display_return_counter = 0;
+    }
+  } else if ( display_return_mode == 2 ) {  //  from 1h ago data display
+    if ( millis( ) - display_return_counter >= 7500 ) // if 7,5 seconds left
+    {                                                 // returning
+      display_mode = 0; // switching to the  current data fisplay
+      prs_disp_mode = 0;  // switching pressure display mode to the pressure mode
+      
+      display_return_counter = 0;
+    }
+  }
+      
+  if ( millis( ) - blink_time_counter >= 800 ) {  // if it's time to blink 
+    blink_time_counter = millis( ); // saving current time
+    blink_led_state = !blink_led_state; // inverting flag
+
+    // night mode enable indication:
+    if ( button_blink_counter == L_PWR_BTN_BLINK_NUMBER )  
+      if ( !night_mode_enable ) 
+        digitalWrite( L_PWR, blink_led_state );
+      else 
+        digitalWrite( L_PWR, 1 );
+  }
+
+  // PWR LED blink algorithm
+  if ( button_blink_counter < L_PWR_BTN_BLINK_NUMBER ) 
+    if ( millis( ) - button_blink_counter_time > 100 ) {
+      digitalWrite( L_PWR, !digitalRead( L_PWR ) );
+      button_blink_counter_time = millis( );
+      button_blink_counter++;
+    }
+
+  // Algorithm of automatic switching LED indication while night mode enabled/disabled
+  if ( night_mode_enable && ( temprary_touch_awake || !night_mode_state ) && leds_disabled ) 
+    leds_disabled = 0;
+  else if ( !night_mode_enable && leds_disabled )
+    leds_disabled = 0;
+  else if ( night_mode_enable && !( temprary_touch_awake || !night_mode_state ) && !leds_disabled ) {
+    leds_disabled = 1;
+    temp_led.off( );
+    prs_led.off( );
+  }
+
+  if ( !leds_disabled ) // if LED indication flag - "enabled"
+    switch ( display_mode ) { // switching between displays
+      case 0: // current data display
+      
+        if ( prs_disp_mode ) 
+          forecast_display( _forecast_range, _forecast_range_blink_mode, blink_led_state );
+        else
+          pressure_display( _pressure_range, _pressure_range_blink_flag,  blink_led_state );
+
+        temp_display( _temp_range, _temp_range_blink_flag, blink_led_state );
+             
+        break;
+        
+      case 1: // 1h ago data display
+      
+        if ( prs_disp_mode ) 
+          forecast_display( _forecast_h_ago_range, _forecast_h_ago_range_blink_mode, blink_led_state );
+        else
+          pressure_display( _pressure_h_ago_range, _pressure_h_ago_range_blink_flag, blink_led_state );
+        
+        history_display( blink_led_state );
+        break;
+    }
+}
+
 void setup( ) {
   bmp.begin( );
   // initialisation temperature indication pins
@@ -674,22 +963,24 @@ void setup( ) {
   avr_luminosity.init( analogRead( A7 ) );
   
   pressure = ( uint32_t )( avr_pressure.get_result( ) );  // saving current pressure 
-  temperature = round( bmp.readTemperature( )  - 2.5 );          // saving current temperature
-  luminosity = avr_luminosity.get_result( );              //saving current luminosity
+  temperature = round( bmp.readTemperature( ) - 2.5 );    // saving current temperature
+  luminosity = avr_luminosity.get_result( );              // saving current luminosity
 
   forecast.begin( pressure );
 
   _pressure_range = pressure_range( round( pressure * Pa_to_hPa ), _pressure_range_blink_flag ); // updating pressure range
   _temp_range = temp_range( temperature, _temp_range_blink_flag );  // updating temperature range
   
-  _forecast_actual_flag = forecast.is_update( );
-  _forecast_range = forecast_range( forecast.get_forecast( ), _forecast_range_blink_mode );
+  _forecast_actual_flag = 0; //forecast.is_update( );
+
+  _forecast_range = forecast_range( 15, _forecast_range_blink_mode );
 
     // System test using Serial
   //Serial.begin( 9600 ); 
   //serial_test_func( );
   //serial_flag_test_func( );
-  //Serial.println("BOOT COMPLETE");
+  //Serial.println( "BOOT COMPLETE" );
+  //Serial.println( "------------------" );
 }
 
 void loop( ) {
@@ -732,4 +1023,5 @@ void loop( ) {
     //serial_test_func( );
   }  
   
+  led_display( ); // LED display func
 }
