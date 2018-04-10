@@ -1,13 +1,11 @@
 /* MeteoBox  
- *  Version: 0.9
+ *  Version: 1.0 (Maybe, final)
  *  Author: Vladislav Yaroshchuk (Shchuko)
  *  Created: 2018
  *  Website: https://github.com/shchuko 
  *  
- *  10/04/2018 shchuko: LED indicastion display configured:
- *                     -switching 
- *                     -auto-returning to current data display
- *                     -waking from the night mode if button have touched             
+ *  10/04/2018 shchuko: Added night flag saving to EEPROM. Added forecast history saving. Bug fixes
+ *                     
  */
 
 /* PIN CONFIGURATION
@@ -38,6 +36,7 @@
  */
 
 #include <Adafruit_BMP085.h>  // Barometr BMPxxx library
+#include <EEPROM.h>
 
 // -----Temperature indication pins-----
 #define L_16C   12 
@@ -69,6 +68,7 @@
 #define LDR     A7  // Light-dependent resistor
 #define L_PWR   1   // Power LED
 #define Pa_to_hPa 0.01 
+#define NIGHT_FLAG_EEPROM_ARRD 0
 
 // -----Controll button preferences-----
 #define BT1_PIN  3 // Interrupt number
@@ -105,7 +105,14 @@ public:
     for ( uint8_t i = 0; i < byte_number; i++ ) // clearing the memory
       LED_string[ i ] = 0;  
   } 
-  
+
+  ~LedString( ) { // never-called destructor ;)
+    delete[ ] pins;
+    pins = NULL;
+
+    delete[ ] LED_string;
+    LED_string = NULL;
+  }
   void init_pin( uint8_t pin_arduino, uint8_t pin_num ) {
     pinMode( pin_arduino, OUTPUT ); // set pin mode as OUTPUT 
     digitalWrite( pin_arduino, 0 ); // set pin state as "0"
@@ -194,6 +201,10 @@ public:
     values = new uint32_t[ _val_number ]; // allocate memory for saving values    
   }
 
+  ~MedianFilter( ) {  // never-called destructor
+    delete[ ] values;
+    values = NULL;
+  }
   void init( uint32_t val ) {
     for ( uint8_t i = 0; i < val_number; i++ )
       values[i] = val;
@@ -222,7 +233,8 @@ public:
 
 class PressureForecast {
 private:
-  uint32_t   *pressure = NULL;        // pointer for dynamic memory allocation
+  uint32_t   *pressure = NULL;        // pointer for dynamic memory allocation for pressure
+  int16_t    *history  = NULL;        // pointer for dynamic memory allocation for forecast history
   int16_t    change_hour;             // pressure change forecast (Pa/h)
   uint8_t    measurement_number;       // measurement number used for calculating forecast
   uint16_t   measurement_interval;    // pressure update interval (in minutes)
@@ -249,40 +261,61 @@ private:
   
 public:
   void set( uint32_t _pressure ) {  // set new pressure value
-    for ( uint8_t i = 0; i < measurement_number - 1; i++ ) // shifting old saved values
+    for ( uint8_t i = 0; i < measurement_number - 1; i++ ) {// shifting old saved values
       pressure[ i ] = pressure[ i + 1 ];  
+      history[ i ] = history[ i + 1 ];
+    }
     pressure[ measurement_number - 1 ] = _pressure;  // saving new value
-
     calculate( ); // re-calculating  forecast
+    
+    history[ measurement_number - 1 ] = change_hour;
     
     if ( meas_updts_counter < measurement_number )  // if full update did not complete
       meas_updts_counter++; 
   }
 
-  bool is_update( ) {  // returning 1 if full update completed
+  bool is_update( ) {  // returns 1 if full update completed
     return ( meas_updts_counter >= measurement_number );
   }
   
-  uint32_t get_pressure( ) { // returning last saved measurement
-    return pressure[ measurement_number - 1 ];
+  int16_t get_history_forecast( ) { // returns forecast history value
+    return history[ 0 ];
   }
 
-  int32_t get_forecast( ) { // returning pressure change forecast (Pa/h)
+  uint32_t get_history_pressure( ) { // returns pressure history value
+    return pressure[ 0 ];
+  }
+
+  int32_t get_forecast( ) { // returns pressure change forecast (Pa/h)
     return change_hour;
   }
   
   void begin( uint32_t _pressure )  // set first pressure value (in Pa)
   {
-    for ( uint8_t i = 0; i < measurement_number; i++ )
+    for ( uint8_t i = 0; i < measurement_number; i++ ) {
       pressure[ i ] = _pressure;
+      history[ i ] = 0;
+    }
   }
   
   PressureForecast( uint8_t  _measurement_number,         // measurement number used for calculating forecast
                      uint16_t  _measurement_interval ) {  // pressure update interval (in minutes)
+    // dynamic memory allocation
     pressure = new uint32_t [ _measurement_number ];
+    history = new int16_t [ _measurement_number ];
+    
     measurement_number = _measurement_number;
     measurement_interval = _measurement_interval;
   }  
+
+  ~PressureForecast( ) {  // never-called destructor ;)
+    delete[ ] pressure;
+    delete[ ] history;
+
+    pressure = NULL;
+    history = NULL;
+  }
+  
 };
 
 class TTP223 {  // TTP223 sensor click handler
@@ -314,6 +347,12 @@ public:
     long_press   = _long_press;
    
     pin = _pin;
+  }
+
+  ~TTP223 ( ) { // never-called destructor ;)
+    short_click = NULL;
+    double_click = NULL;
+    long_press = NULL;
   }
 
   void loop_func( ) { // button click handler
@@ -379,6 +418,7 @@ int16_t  temperature = 0;    // current temperature in *C
 uint16_t luminosity = 1023;  // current illumination value (from ADC: 0..1023)
 
 bool     _forecast_actual_flag = 0;      // forecast actual flag
+
 uint8_t  _forecast_range = 4;            // forecast range (for LED string)
 uint8_t  _forecast_range_blink_mode = 4; // forecast blink mode 
 
@@ -503,9 +543,9 @@ void button_short_click( ) {
 void button_double_click( ) { 
   button_blink_counter = 0; // setting buton blink counter to zero
   digitalWrite( L_PWR, 1 ); // switching on PWR LED
-
-  if ( !night_mode_state || temprary_touch_awake )  // if LEDs are enabled or it is temprary awake
-  {
+  
+  if ( ( !night_mode_state || temprary_touch_awake ) && _forecast_actual_flag )  // if LEDs are enabled or it is temprary awake
+  {                                                                              // and 1h left after powering on system
     prs_disp_mode = 0;  // switching pressure display mode to a pressure mode
     
     if ( display_mode = !display_mode ) { // if it is switching to 1h ago data display 
@@ -538,7 +578,10 @@ void button_long_press( ) {
   if ( !night_mode_state || temprary_touch_awake )  // if LEDs are enabled or it is temprary awake
   {
     if ( !display_mode ) {  // if it's current data display
-      if ( night_mode_enable = !night_mode_enable ) // changing night mode
+      night_mode_enable = !night_mode_enable;
+      EEPROM.update( NIGHT_FLAG_EEPROM_ARRD, night_mode_enable );
+      
+      if ( night_mode_enable ) // changing night mode
         temprary_touch_awake = 0; // if it's swithching off night mode, disabling temprary awake timer
     } else {  // else if it's not current data display
       display_mode = 0; // switching to a "current data" display
@@ -552,6 +595,7 @@ void button_long_press( ) {
     prs_disp_mode = 0;  // switching pressure display mode to the pressure mode
     
     night_mode_enable = 0; // disabling night mode
+    EEPROM.update( NIGHT_FLAG_EEPROM_ARRD, night_mode_enable );
     
     temprary_touch_awake = 1; // waking up system for several seconds
     temprary_touch_awake_counter = millis( ); // updating awake timer
@@ -736,13 +780,13 @@ void bootanimation( ) {
   
   temp_led.off( );
   delay( 500 );
-
+  
   for ( uint8_t i = 0; i < 15; i++ ) {
-  digitalWrite( L_PWR, 0 );
-  delay( 100 );
-
-  digitalWrite( L_PWR, 1 );
-  delay( 100 );
+    digitalWrite( L_PWR, 0 );
+    delay( 100 );
+  
+    digitalWrite( L_PWR, 1 );
+    delay( 100 );
   }
 }
 
@@ -957,8 +1001,10 @@ void setup( ) {
 
   delay( 1500 );
   
-  bootanimation( );
+  night_mode_enable = EEPROM.read( NIGHT_FLAG_EEPROM_ARRD );
   
+  bootanimation( );
+
   avr_pressure.init( round( bmp.readPressure( ) ) );
   avr_luminosity.init( analogRead( A7 ) );
   
@@ -1014,6 +1060,11 @@ void loop( ) {
       forecast.set( pressure ); // updating forecast
       _forecast_actual_flag = forecast.is_update( );  // updating forecast actuality flag
       _forecast_range = forecast_range( forecast.get_forecast( ), _forecast_range_blink_mode ); // updating forecast range
+
+      // updating history (1h ago) values:
+      _forecast_h_ago_range = forecast_range( forecast.get_history_forecast( ), _forecast_h_ago_range_blink_mode );
+      _pressure_h_ago_range = pressure_range( forecast.get_history_pressure( ), _pressure_h_ago_range_blink_flag );
+      
       forecast_upd_counter = millis( );
 
       //Serial.println( "-----------Forecast update-----------" );
