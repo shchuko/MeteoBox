@@ -1,6 +1,13 @@
 # MeteoBox
-##### Simple Arduino-based weather predictor (pressure change tendention calculator)
+##### Simple Arduino-based weather predictor (pressure change tendention calculator). 
 ------
+![img_20180410_233451](https://user-images.githubusercontent.com/36963534/38636900-3e3dae22-3dd2-11e8-8c6b-1681ebcb5d30.jpg)
+------
+## Device functions
+- Display current value of atmospheric pressure (in the range from 970 to 1050 hPa)
+- Display current atmospheric pressure change tendention (in the range from -225 Pa/h to +225 Pa/h)
+- Display of ambient temperature (in the range from +16°C to +28°C)
+- Display of archive readings: atmospheric pressure,  atmospheric pressure change tendention (readings that was made 60 minutes ago)
 ## Files
 `libs/` — Arduino libraries
 
