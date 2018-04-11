@@ -1,10 +1,10 @@
 /* MeteoBox  
- *  Version: 1.0 (Maybe, final)
+ *  Version: 1.0.1
  *  Author: Vladislav Yaroshchuk (Shchuko)
  *  Created: 2018
  *  Website: https://github.com/shchuko 
  *  
- *  10/04/2018 shchuko: Added night flag saving to EEPROM. Added forecast history saving. Bug fixes
+ *  11/04/2018 shchuko: Bug fixes
  *                     
  */
 
@@ -581,10 +581,11 @@ void button_long_press( ) {
       night_mode_enable = !night_mode_enable;
       EEPROM.update( NIGHT_FLAG_EEPROM_ARRD, night_mode_enable );
       
-      if ( night_mode_enable ) // changing night mode
-        temprary_touch_awake = 0; // if it's swithching off night mode, disabling temprary awake timer
+    if ( night_mode_enable ) // changing night mode
+      temprary_touch_awake = 0; // if it's swithching off night mode, disabling temprary awake timer
     } else {  // else if it's not current data display
       display_mode = 0; // switching to a "current data" display
+      prs_disp_mode = 0;  // switching pressure display mode to a pressure mode
     }
 
     // if it's it is temprary awake, updating awake timer
@@ -878,7 +879,7 @@ void temp_display( uint8_t range, bool blink_flag, bool blink_state ) {
   }   
 }
 
-void history_display( bool blink_state ) {
+void history_display( ) {
   temp_led.set_pin( 0, 1 );
   temp_led.set_pin( 2, 1 );
   temp_led.set_pin( 4, 1 );
@@ -969,7 +970,7 @@ void led_display( ) {
         else
           pressure_display( _pressure_h_ago_range, _pressure_h_ago_range_blink_flag, blink_led_state );
         
-        history_display( blink_led_state );
+        history_display( );
         break;
     }
 }
@@ -1009,7 +1010,7 @@ void setup( ) {
   avr_luminosity.init( analogRead( A7 ) );
   
   pressure = ( uint32_t )( avr_pressure.get_result( ) );  // saving current pressure 
-  temperature = round( bmp.readTemperature( ) - 2.5 );    // saving current temperature
+  temperature = round( bmp.readTemperature( ) - 3 );    // saving current temperature
   luminosity = avr_luminosity.get_result( );              // saving current luminosity
 
   forecast.begin( pressure );
@@ -1019,7 +1020,7 @@ void setup( ) {
   
   _forecast_actual_flag = 0; //forecast.is_update( );
 
-  _forecast_range = forecast_range( 15, _forecast_range_blink_mode );
+  _forecast_range = forecast_range( forecast.get_forecast( ), _forecast_range_blink_mode );
 
     // System test using Serial
   //Serial.begin( 9600 ); 
@@ -1052,7 +1053,7 @@ void loop( ) {
     pressure = pressure_upd( );  // updating pressure
     _pressure_range = pressure_range( round( pressure * Pa_to_hPa ), _pressure_range_blink_flag ); // updating pressure range
     
-    temperature = round( bmp.readTemperature( ) - 2.5 ); // updating temperature
+    temperature = round( bmp.readTemperature( ) - 3 ); // updating temperature
     _temp_range = temp_range( temperature, _temp_range_blink_flag );  // updating temperature range
 
     
@@ -1063,7 +1064,7 @@ void loop( ) {
 
       // updating history (1h ago) values:
       _forecast_h_ago_range = forecast_range( forecast.get_history_forecast( ), _forecast_h_ago_range_blink_mode );
-      _pressure_h_ago_range = pressure_range( forecast.get_history_pressure( ), _pressure_h_ago_range_blink_flag );
+      _pressure_h_ago_range = pressure_range( round( forecast.get_history_pressure( ) * Pa_to_hPa ), _pressure_h_ago_range_blink_flag );
       
       forecast_upd_counter = millis( );
 
