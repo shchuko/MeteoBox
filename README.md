@@ -13,6 +13,8 @@
 
 `pcbs/` — PCBs drawings, also including components list
 
+`images/` — device photos
+
 `print_templates/` — Front panel and insulator print templates
 
 `src/` — Well-commented source code 
