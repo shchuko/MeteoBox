@@ -1,10 +1,10 @@
 /* MeteoBox  
- *  Version: 1.0.1
+ *  Version: 1.0.2
  *  Author: Vladislav Yaroshchuk (Shchuko)
  *  Created: 2018
  *  Website: https://github.com/shchuko 
  *  
- *  11/04/2018 shchuko: Bug fixes
+ *  11/04/2018 shchuko: Watchdog timer added. Bug fixes
  *                     
  */
 
@@ -36,7 +36,8 @@
  */
 
 #include <Adafruit_BMP085.h>  // Barometr BMPxxx library
-#include <EEPROM.h>
+#include <EEPROM.h> // EEPROM library
+#include <avr/wdt.h>  // Avr watchdog timer library
 
 // -----Temperature indication pins-----
 #define L_16C   12 
@@ -712,20 +713,24 @@ uint8_t temp_range( int16_t temp, bool& blink_flag ) {  // returning the range o
   if ( temp <= 20 )
     return 2; // 20*C LED enable
     
-  if ( temp > 20 && temp < 24 )
+  if ( temp > 20 && temp < 23 )
     return 3; // 22*C LED enable
+
+  
+  if ( temp <= 24 )
+    return 4; // 24*C LED enable
+
+  if ( temp <= 26 )
+    return 5; // 26*C LED enable
     
-  if ( temp >= 28 ) {
+  if ( temp >= 27 ) {
     if ( temp > 28 )
       blink_flag = 1; // 28*C LED blink enable
     return 6; // 28*C LED enable
   }
     
-  if ( temp >= 26 )
-    return 5; // 26*C LED enable
+  
       
-  if ( temp >= 24 )
-    return 4; // 24*C LED enable
 }
 
 uint8_t pressure_range( uint16_t pressure_hPa, bool& blink_flag ) { // returning the range of pressure
@@ -750,7 +755,7 @@ uint8_t pressure_range( uint16_t pressure_hPa, bool& blink_flag ) { // returning
   if ( pressure_hPa >= 1005 && pressure_hPa < 1015 )
     return 4; // 1010 hPa LED enable
       
-  if ( pressure_hPa > 1045 ) {
+  if ( pressure_hPa >= 1045 ) {
     if ( pressure_hPa > 1050 )
       blink_flag = 1; // 1050 hPa LED blink enable
     return 8; // 1050 hPa LED enable
@@ -976,6 +981,7 @@ void led_display( ) {
 }
 
 void setup( ) {
+  wdt_disable( );
   bmp.begin( );
   // initialisation temperature indication pins
   temp_led.init_pin( L_16C, 0 );
@@ -1028,9 +1034,13 @@ void setup( ) {
   //serial_flag_test_func( );
   //Serial.println( "BOOT COMPLETE" );
   //Serial.println( "------------------" );
+  
+  wdt_enable( WDTO_8S );  // setting up watchdog timer
 }
 
 void loop( ) {
+  wdt_reset( ); // resetting watchdog timer
+  
   button.loop_func( ); 
   
   luminosity_upd( luminosity ); //updating luminosity
@@ -1040,7 +1050,7 @@ void loop( ) {
     if ( luminosity < 95 )  // if luminosity is low
       night_mode_state = 1;
     else if ( luminosity > 127 )  // if luminosity is high
-      night_mode_state = 0;
+      night_mode_state= 0;
   } else if ( night_mode_state ) {
     night_mode_state = 0;
   }
