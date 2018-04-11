@@ -9,11 +9,12 @@
 - Display of ambient temperature (in the range from +16°C to +28°C)
 - Display of archive readings: atmospheric pressure,  atmospheric pressure change tendention (readings that was made 60 minutes ago)
 ## Files
+
+`images/` — Device photos
+
 `libs/` — Arduino libraries
 
 `pcbs/` — PCBs drawings, also including components list
-
-`images/` — device photos
 
 `print_templates/` — Front panel and insulator print templates
 
