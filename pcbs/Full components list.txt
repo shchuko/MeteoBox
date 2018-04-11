@@ -6,7 +6,7 @@ Components: controller
 4. D1 Nano v3
 5. G1 DC Jack
 6. LDR1  
-7. R0 10k
+7. R0 10k (SMD)
 8. SB1 TTP223
 9. SB2 RST
 10. X1
