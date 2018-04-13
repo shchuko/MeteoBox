@@ -19,8 +19,8 @@
 `print_templates/` — Front panel and insulator print templates
 
 `src/` — Well-commented source code 
-## Installition
-- Inslall [Arduino IDE](https://www.arduino.cc/en/Main/Software)
+## Installation
+- Install [Arduino IDE](https://www.arduino.cc/en/Main/Software)
 - Install [Optiboot bootloader](https://github.com/Optiboot/optiboot#to-install-into-the-arduino-software) into the Arduino software 
 - [Burn Optiboot bootloader onto your Arduino Nano board](https://github.com/Optiboot/optiboot#to-burn-optiboot-onto-an-arduino-board)*
 - Install the libraries `libs/` into the Arduino software 
