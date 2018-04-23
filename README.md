@@ -24,8 +24,8 @@
 - Install [Arduino IDE](https://www.arduino.cc/en/Main/Software)
 - Install [Optiboot bootloader](https://github.com/Optiboot/optiboot#to-install-into-the-arduino-software) into the Arduino software 
 - [Burn Optiboot bootloader onto your Arduino Nano board](https://github.com/Optiboot/optiboot#to-burn-optiboot-onto-an-arduino-board)*
-- Install the libraries `libs/` into the Arduino software 
-- Flash the sketch `src/sketch/sketch.ino` into the Arduino board using Arduino IDE
+- Install the libraries `src/libs/` into the Arduino software 
+- Flash the sketch `src/sketch/` into the Arduino board using Arduino IDE
 - Connect the the rest of electronic components from the list `pcbs/Full components list.txt`. You can use PCBs or Bread board for this. I did not make a circuit, but using PCB drawings it's easy to figure out the connection of electronic components
 - Power the board on!
 
