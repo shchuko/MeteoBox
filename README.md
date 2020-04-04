@@ -8,6 +8,11 @@
 - Display current atmospheric pressure change tendention (in the range from -225 Pa/h to +225 Pa/h)
 - Display of ambient temperature (in the range from +16°C to +28°C)
 - Display of archive readings: atmospheric pressure,  atmospheric pressure change tendention (readings that was made 60 minutes ago)
+
+## More information, user guide
+
+[Uploaded to project wiki](https://github.com/shchuko/MeteoBox/wiki)
+
 ## Files
 
 `images/` — Device photos
@@ -38,8 +43,6 @@ wdt_reset( ); // resetting watchdog timer
 ```
 
 ## Links
-https://github.com/Optiboot/optiboot — Optiboot bootloader
+[Optiboot bootloader](https://github.com/Optiboot/optiboot)
 
-http://telegra.ph/MeteoBox-v10-04-11 — User guide with photos (in Russian)
-
-https://www.arduino.cc/en/Main/Software — Arduino Software
+[Arduino Software](https://www.arduino.cc/en/Main/Software)
